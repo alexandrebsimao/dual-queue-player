@@ -49,7 +49,7 @@ final class PerformanceViewModel: ObservableObject {
     var currentItems: [PerformanceItem] { selectedScene?.items ?? [] }
 
     var currentSceneDuration: TimeInterval {
-        selectedScene?.expectedDuration ?? selectedScene?.calculatedDuration ?? 0
+        selectedScene?.expectedDuration ?? 0
     }
 
     var activeItemsList: [ActivePerformanceItem] {
@@ -109,10 +109,10 @@ final class PerformanceViewModel: ObservableObject {
         onChange?()
     }
 
-    func addScene(named name: String = "Nova cena") {
+    func addScene(named name: String = "Nova cena", expectedDuration: TimeInterval? = nil) {
         guard let projectIndex = projects.firstIndex(where: { $0.id == selectedProjectID }) else { return }
         let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let scene = PerformanceScene(name: cleanName.isEmpty ? "Nova cena" : cleanName)
+        let scene = PerformanceScene(name: cleanName.isEmpty ? "Nova cena" : cleanName, expectedDuration: expectedDuration)
         projects[projectIndex].scenes.append(scene)
         projects[projectIndex].selectedSceneID = scene.id
         selectedSceneID = scene.id
@@ -127,6 +127,22 @@ final class PerformanceViewModel: ObservableObject {
         let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanName.isEmpty else { return }
         projects[projectIndex].scenes[sceneIndex].name = cleanName
+        onChange?()
+    }
+
+    func setSceneExpectedDuration(_ id: UUID, duration: TimeInterval?) {
+        guard let projectIndex = projects.firstIndex(where: { $0.id == selectedProjectID }),
+              let sceneIndex = projects[projectIndex].scenes.firstIndex(where: { $0.id == id }) else { return }
+        projects[projectIndex].scenes[sceneIndex].expectedDuration = duration.map { max(0, $0) }
+        onChange?()
+    }
+
+    func updateScene(_ id: UUID, name: String, expectedDuration: TimeInterval?) {
+        guard let projectIndex = projects.firstIndex(where: { $0.id == selectedProjectID }),
+              let sceneIndex = projects[projectIndex].scenes.firstIndex(where: { $0.id == id }) else { return }
+        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleanName.isEmpty { projects[projectIndex].scenes[sceneIndex].name = cleanName }
+        projects[projectIndex].scenes[sceneIndex].expectedDuration = expectedDuration.map { max(0, $0) }
         onChange?()
     }
 
@@ -210,6 +226,20 @@ final class PerformanceViewModel: ObservableObject {
         onChange?()
     }
 
+    func moveItem(_ id: UUID, by offset: Int) {
+        guard offset != 0,
+              let projectIndex = projects.firstIndex(where: { $0.id == selectedProjectID }),
+              let sceneIndex = projects[projectIndex].scenes.firstIndex(where: { $0.id == selectedSceneID }),
+              let sourceIndex = projects[projectIndex].scenes[sceneIndex].items.firstIndex(where: { $0.id == id }) else { return }
+
+        let destinationIndex = sourceIndex + offset
+        guard projects[projectIndex].scenes[sceneIndex].items.indices.contains(destinationIndex) else { return }
+        let item = projects[projectIndex].scenes[sceneIndex].items.remove(at: sourceIndex)
+        projects[projectIndex].scenes[sceneIndex].items.insert(item, at: destinationIndex)
+        selectedItemID = id
+        onChange?()
+    }
+
     func trigger(_ itemID: UUID) {
         guard let item = currentItems.first(where: { $0.id == itemID }) else { return }
         guard let url = item.fileURL, FileManager.default.fileExists(atPath: url.path), !item.isMissing else {
@@ -272,6 +302,10 @@ final class PerformanceViewModel: ObservableObject {
     }
 
     func startSceneClock() {
+        guard currentSceneDuration > 0 else {
+            showMessage("Defina a duração da cena antes de iniciar o relógio.")
+            return
+        }
         guard sceneClockState != .running else { return }
         sceneClockState = .running
         sceneClockAnchor = Date()
@@ -300,7 +334,7 @@ final class PerformanceViewModel: ObservableObject {
 
     func seekSceneClock(to time: TimeInterval) {
         let limit = currentSceneDuration
-        sceneElapsedTime = limit > 0 ? min(max(0, time), limit) : max(0, time)
+        sceneElapsedTime = limit > 0 ? min(max(0, time), limit) : 0
         if sceneClockState == .running { sceneClockAnchor = Date() }
     }
 

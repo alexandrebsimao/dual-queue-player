@@ -34,6 +34,22 @@ final class PerformanceTests: XCTestCase {
         XCTAssertEqual(Set(vm.currentItems.map(\.id)).count, 3)
     }
 
+    func testCueArrowsMoveItemWithinSceneOrder() {
+        let items = (0..<3).map { PerformanceItem(name: "Cue \($0)") }
+        let scene = PerformanceScene(name: "Cena", items: items)
+        let vm = PerformanceViewModel(
+            projects: [PerformanceProject(name: "Projeto", scenes: [scene])],
+            selectedProjectID: nil,
+            audio: AudioEngineManager()
+        )
+
+        vm.moveItem(items[1].id, by: -1)
+        XCTAssertEqual(vm.currentItems.map(\.id), [items[1].id, items[0].id, items[2].id])
+
+        vm.moveItem(items[1].id, by: 1)
+        XCTAssertEqual(vm.currentItems.map(\.id), [items[0].id, items[1].id, items[2].id])
+    }
+
     func testOldProjectWithoutPerformanceFieldsStillDecodes() throws {
         let data = try JSONEncoder().encode(AppProject.empty)
         var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
@@ -60,5 +76,21 @@ final class PerformanceTests: XCTestCase {
         XCTAssertEqual(vm.sceneElapsedTime, 10)
         vm.seekSceneClock(to: -5)
         XCTAssertEqual(vm.sceneElapsedTime, 0)
+    }
+
+    func testSceneExpectedDurationCanBeManualOrUnset() {
+        let item = PerformanceItem(name: "Cue", duration: 8)
+        let scene = PerformanceScene(name: "Cena", items: [item])
+        let vm = PerformanceViewModel(
+            projects: [PerformanceProject(name: "Projeto", scenes: [scene])],
+            selectedProjectID: nil,
+            audio: AudioEngineManager()
+        )
+
+        vm.setSceneExpectedDuration(scene.id, duration: 125)
+        XCTAssertEqual(vm.currentSceneDuration, 125)
+
+        vm.setSceneExpectedDuration(scene.id, duration: nil)
+        XCTAssertEqual(vm.currentSceneDuration, 0)
     }
 }

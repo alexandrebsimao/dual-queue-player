@@ -1,13 +1,16 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct PerformanceView: View {
     @ObservedObject var viewModel: PerformanceViewModel
     @State private var projectToDelete: PerformanceProject?
     @State private var sceneToDelete: PerformanceScene?
     @State private var isRenamingProject = false
-    @State private var isRenamingScene = false
     @State private var projectNameDraft = ""
-    @State private var sceneNameDraft = ""
+    @State private var draggedItemID: UUID?
+    @State private var isSceneEditorPresented = false
+    @State private var sceneBeingEdited: PerformanceScene?
+    @State private var isCreatingScene = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -61,12 +64,19 @@ struct PerformanceView: View {
                 if let project = viewModel.selectedProject { viewModel.renameProject(project.id, to: projectNameDraft) }
             }
         }
-        .alert("Renomear cena", isPresented: $isRenamingScene) {
-            TextField("Nome da cena", text: $sceneNameDraft)
-            Button("Cancelar", role: .cancel) {}
-            Button("Salvar") {
-                if let scene = viewModel.selectedScene { viewModel.renameScene(scene.id, to: sceneNameDraft) }
-            }
+        .sheet(isPresented: $isSceneEditorPresented) {
+            PerformanceSceneEditorView(
+                scene: sceneBeingEdited,
+                onCancel: { isSceneEditorPresented = false },
+                onSave: { name, duration in
+                    if isCreatingScene {
+                        viewModel.addScene(named: name, expectedDuration: duration)
+                    } else if let sceneBeingEdited {
+                        viewModel.updateScene(sceneBeingEdited.id, name: name, expectedDuration: duration)
+                    }
+                    isSceneEditorPresented = false
+                }
+            )
         }
     }
 
@@ -146,9 +156,11 @@ struct PerformanceView: View {
                         .font(.system(size: 15, weight: .semibold))
                     Spacer()
                     Button {
-                        viewModel.addScene()
+                        sceneBeingEdited = nil
+                        isCreatingScene = true
+                        isSceneEditorPresented = true
                     } label: {
-                        Image(systemName: "plus.circle.fill")
+                        Image(systemName: "plus")
                     }
                     .buttonStyle(DQPerformanceButtonStyle())
                 }
@@ -172,8 +184,9 @@ struct PerformanceView: View {
                                 .buttonStyle(.plain)
                                 if scene.id == viewModel.selectedSceneID {
                                     Button {
-                                        sceneNameDraft = scene.name
-                                        isRenamingScene = true
+                                        sceneBeingEdited = scene
+                                        isCreatingScene = false
+                                        isSceneEditorPresented = true
                                     } label: {
                                         Image(systemName: "pencil")
                                     }
@@ -214,14 +227,38 @@ struct PerformanceView: View {
     private var sceneHeader: some View {
         VStack(spacing: 12) {
             HStack(alignment: .top) {
+                Image(systemName: viewModel.selectedProject?.kind.symbolName ?? "theatermasks")
+                    .font(.system(size: 23, weight: .semibold))
+                    .frame(width: 48, height: 48)
+                    .background(Color.blue.gradient)
+                    .foregroundStyle(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(viewModel.selectedProject?.name ?? "Performance")
-                        .font(.system(size: 22, weight: .bold))
+                    HStack(spacing: 10) {
+                        Text(viewModel.selectedProject?.name ?? "Performance")
+                            .font(.system(size: 21, weight: .bold))
+                        DQBadge(text: "Performance", color: .blue)
+                    }
                     Text(viewModel.selectedScene?.name ?? "Selecione ou crie uma cena")
-                        .font(.system(size: 13))
+                        .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(Color.dqMuted)
+                    if let expectedDuration = viewModel.selectedScene?.expectedDuration {
+                        Text("\(viewModel.currentItems.count) cues • duração \(formatTime(expectedDuration))")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color.dqMuted)
+                    } else {
+                        Text("\(viewModel.currentItems.count) cues")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color.dqMuted)
+                    }
                 }
                 Spacer()
+                Button("Editar cena", systemImage: "pencil") {
+                    sceneBeingEdited = viewModel.selectedScene
+                    isCreatingScene = false
+                    isSceneEditorPresented = true
+                }
+                .buttonStyle(DQPerformanceButtonStyle())
                 Picker("Visualização", selection: Binding(
                     get: { viewModel.displayMode },
                     set: { viewModel.setDisplayMode($0) }
@@ -234,26 +271,31 @@ struct PerformanceView: View {
                 .frame(width: 170)
             }
 
-            HStack(spacing: 10) {
-                Image(systemName: viewModel.sceneClockState == .running ? "timer" : "clock")
-                    .foregroundStyle(.orange)
-                Text(formatTime(viewModel.sceneElapsedTime))
-                    .font(.system(size: 24, weight: .bold, design: .monospaced))
-                Text("/ \(formatTime(viewModel.currentSceneDuration))")
-                    .foregroundStyle(Color.dqMuted)
-                Spacer()
-                Button(viewModel.sceneClockState == .running ? "Pausar" : "Iniciar", systemImage: viewModel.sceneClockState == .running ? "pause.fill" : "play.fill") {
-                    if viewModel.sceneClockState == .running { viewModel.pauseSceneClock() }
-                    else { viewModel.startSceneClock() }
-                }
-                .buttonStyle(DQPerformanceButtonStyle())
-                Button("Zerar", systemImage: "arrow.counterclockwise") { viewModel.resetSceneClock() }
+            if viewModel.selectedScene?.expectedDuration != nil {
+                HStack(spacing: 10) {
+                    Image(systemName: viewModel.sceneClockState == .running ? "timer" : "clock")
+                        .foregroundStyle(.orange)
+                    Text(formatTime(viewModel.sceneElapsedTime))
+                        .font(.system(size: 24, weight: .bold, design: .monospaced))
+                    Text("/ \(formatTime(viewModel.currentSceneDuration))")
+                        .foregroundStyle(Color.dqMuted)
+                    Spacer()
+                    Button(viewModel.sceneClockState == .running ? "Pausar" : "Iniciar", systemImage: viewModel.sceneClockState == .running ? "pause.fill" : "play.fill") {
+                        if viewModel.sceneClockState == .running { viewModel.pauseSceneClock() }
+                        else { viewModel.startSceneClock() }
+                    }
                     .buttonStyle(DQPerformanceButtonStyle())
+                    Button("Zerar", systemImage: "arrow.counterclockwise") { viewModel.resetSceneClock() }
+                        .buttonStyle(DQPerformanceButtonStyle())
+                }
+                ProgressView(value: viewModel.sceneElapsedTime, total: max(viewModel.currentSceneDuration, 1))
+                    .tint(.orange)
+            }
+            HStack {
+                Spacer()
                 Button("Parar tudo", systemImage: "stop.fill") { viewModel.stopAll() }
                     .buttonStyle(DQPerformanceButtonStyle(tint: .red, prominent: true))
             }
-            ProgressView(value: viewModel.currentSceneDuration > 0 ? viewModel.sceneElapsedTime : 0, total: max(viewModel.currentSceneDuration, 1))
-                .tint(.orange)
             HStack(spacing: 10) {
                 Toggle("Permitir sobreposição de mídias", isOn: Binding(
                     get: { viewModel.selectedProject?.mixMode == .overlay },
@@ -278,8 +320,24 @@ struct PerformanceView: View {
                     .font(.system(size: 16, weight: .semibold))
                 Spacer()
                 Button("Importar mídias", systemImage: "plus") { viewModel.presentAddItemPanel() }
-                    .buttonStyle(DQPerformanceButtonStyle())
+                    .buttonStyle(.borderedProminent)
+                    .tint(.blue)
             }
+
+            HStack(spacing: 10) {
+                Text("#").frame(width: 22)
+                Text("Cue")
+                Spacer()
+                Text("Classificação").frame(width: 95, alignment: .leading)
+                Text("Duração").frame(width: 56, alignment: .trailing)
+                Text("").frame(width: 86)
+            }
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(Color.dqMuted)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(Color.dqRow.opacity(0.6))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             ScrollView {
                 LazyVStack(spacing: 6) {
@@ -320,6 +378,10 @@ struct PerformanceView: View {
         let active = viewModel.activeItems[item.id]
         return VStack(spacing: 6) {
             HStack(spacing: 10) {
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Color.dqMuted)
+                .help("Arraste para reordenar")
             Text("\(index)")
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(Color.dqMuted)
@@ -342,6 +404,24 @@ struct PerformanceView: View {
                 .foregroundStyle(Color.dqMuted)
             }
             Spacer()
+            VStack(spacing: 2) {
+                Button {
+                    viewModel.moveItem(item.id, by: -1)
+                } label: {
+                    Image(systemName: "chevron.up")
+                }
+                .buttonStyle(DQPerformanceButtonStyle())
+                .disabled(index <= 1)
+                .opacity(index <= 1 ? 0.35 : 1)
+                Button {
+                    viewModel.moveItem(item.id, by: 1)
+                } label: {
+                    Image(systemName: "chevron.down")
+                }
+                .buttonStyle(DQPerformanceButtonStyle())
+                .disabled(index >= viewModel.currentItems.count)
+                .opacity(index >= viewModel.currentItems.count ? 0.35 : 1)
+            }
             if let active {
                 Button { active.state == .playing ? viewModel.pause(item.id) : viewModel.resume(item.id) } label: {
                     Image(systemName: active.state == .playing ? "pause.fill" : "play.fill")
@@ -372,6 +452,18 @@ struct PerformanceView: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .contentShape(Rectangle())
         .onTapGesture { viewModel.selectItem(item.id) }
+        .onDrag {
+            draggedItemID = item.id
+            return NSItemProvider(object: item.id.uuidString as NSString)
+        }
+        .onDrop(
+            of: [UTType.text.identifier],
+            delegate: PerformanceItemDropDelegate(
+                itemID: item.id,
+                draggedItemID: $draggedItemID,
+                viewModel: viewModel
+            )
+        )
     }
 
     private var activeItemsPanel: some View {
@@ -500,5 +592,106 @@ struct PerformanceView: View {
     private func formatTime(_ time: TimeInterval) -> String {
         let total = max(0, Int(time.rounded()))
         return String(format: "%02d:%02d", total / 60, total % 60)
+    }
+}
+
+private struct PerformanceSceneEditorView: View {
+    let scene: PerformanceScene?
+    let onCancel: () -> Void
+    let onSave: (String, TimeInterval?) -> Void
+
+    @State private var usesAutomaticDuration: Bool
+    @State private var name: String
+    @State private var minutes: String
+    @State private var seconds: String
+
+    init(scene: PerformanceScene?, onCancel: @escaping () -> Void, onSave: @escaping (String, TimeInterval?) -> Void) {
+        self.scene = scene
+        self.onCancel = onCancel
+        self.onSave = onSave
+        let duration = scene?.expectedDuration ?? 0
+        _name = State(initialValue: scene?.name ?? "Nova cena")
+        _usesAutomaticDuration = State(initialValue: scene?.expectedDuration == nil)
+        _minutes = State(initialValue: String(Int(duration) / 60))
+        _seconds = State(initialValue: String(Int(duration) % 60))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(scene == nil ? "Nova cena" : "Editar cena")
+                .font(.system(size: 18, weight: .bold))
+            TextField("Nome da cena", text: $name)
+                .textFieldStyle(.roundedBorder)
+
+            Toggle("Definir duração da cena", isOn: Binding(
+                get: { !usesAutomaticDuration },
+                set: { usesAutomaticDuration = !$0 }
+            ))
+
+            if !usesAutomaticDuration {
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Minutos")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color.dqMuted)
+                        TextField("0", text: $minutes)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 90)
+                    }
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Segundos")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color.dqMuted)
+                        TextField("0", text: $seconds)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 90)
+                    }
+                }
+            } else {
+                Text("Sem duração definida, o relógio da cena não será exibido.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.dqMuted)
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancelar", action: onCancel)
+                    .buttonStyle(DQPerformanceButtonStyle())
+                Button("Salvar") {
+                    let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let duration = usesAutomaticDuration || manualDuration <= 0 ? nil : manualDuration
+                    onSave(cleanName.isEmpty ? "Nova cena" : cleanName, duration)
+                }
+                .buttonStyle(DQPerformanceButtonStyle(prominent: true))
+            }
+        }
+        .padding(22)
+        .frame(width: 360)
+    }
+
+    private var manualDuration: TimeInterval {
+        let minuteValue = max(0, Int(minutes.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0)
+        let secondValue = min(max(0, Int(seconds.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0), 59)
+        return TimeInterval((minuteValue * 60) + secondValue)
+    }
+}
+
+private struct PerformanceItemDropDelegate: DropDelegate {
+    let itemID: UUID
+    @Binding var draggedItemID: UUID?
+    let viewModel: PerformanceViewModel
+
+    func dropEntered(info: DropInfo) {
+        guard let draggedItemID, draggedItemID != itemID else { return }
+        viewModel.moveItem(draggedItemID, before: itemID)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        draggedItemID = nil
+        return true
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
     }
 }

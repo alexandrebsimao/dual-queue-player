@@ -76,6 +76,8 @@ struct DQPerformanceButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 12, weight: .semibold))
+            .imageScale(.small)
+            .symbolRenderingMode(.hierarchical)
             .foregroundStyle(prominent ? Color.white : Color.white.opacity(0.9))
             .frame(minHeight: 28)
             .padding(.horizontal, 10)
