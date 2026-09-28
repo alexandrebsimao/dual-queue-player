@@ -332,10 +332,21 @@ final class MainViewModel: ObservableObject {
         case "left": previous()
         case "right": next()
         default:
+            if triggerPad(for: key) { return }
             let index = key == "0" ? 9 : (Int(key).map { $0 - 1 } ?? -1)
             guard padPages.indices.contains(selectedPadPageIndex), padPages[selectedPadPageIndex].pads.indices.contains(index) else { return }
             triggerPad(padPages[selectedPadPageIndex].pads[index])
         }
+    }
+
+    private func triggerPad(for shortcut: String) -> Bool {
+        guard padPages.indices.contains(selectedPadPageIndex) else { return false }
+        let normalizedShortcut = shortcut.lowercased()
+        guard let pad = padPages[selectedPadPageIndex].pads.first(where: {
+            $0.keyboardShortcut?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedShortcut
+        }) else { return false }
+        triggerPad(pad)
+        return true
     }
 
     private func switchQueue(to identifier: QueueIdentifier, startTrack: Track?, shouldStart: Bool) {

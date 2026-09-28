@@ -26,7 +26,7 @@ struct PerformanceView: View {
             VStack(spacing: 12) {
                 inspector
                 playlistPanel
-                    .frame(height: 178)
+                    .frame(height: 210)
             }
                 .frame(width: 330)
         }
@@ -344,11 +344,27 @@ struct PerformanceView: View {
                         .lineLimit(1)
                 }
                 Spacer()
-                if let currentQueue = mainViewModel.currentQueue {
-                    DQBadge(text: currentQueue.title, color: .blue)
+                DQBadge(text: mainViewModel.activeQueue.title, color: .blue)
+            }
+            Picker("Fila da Playlist", selection: Binding(
+                get: { mainViewModel.activeQueue },
+                set: { mainViewModel.selectQueue($0) }
+            )) {
+                ForEach(QueueIdentifier.allCases) { queue in
+                    Text(queue.title).tag(queue)
                 }
             }
-            HStack(spacing: 8) {
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            HStack(spacing: 6) {
+                Button {
+                    mainViewModel.previous()
+                } label: {
+                    Image(systemName: "backward.end.fill")
+                }
+                .buttonStyle(DQPerformanceButtonStyle())
+                .frame(maxWidth: .infinity)
+                .help("Faixa anterior")
                 Button(
                     mainViewModel.playbackState == .playing ? "Pausar playlist" : "Iniciar playlist",
                     systemImage: mainViewModel.playbackState == .playing ? "pause.fill" : "play.fill"
@@ -357,11 +373,22 @@ struct PerformanceView: View {
                 }
                 .buttonStyle(DQPerformanceButtonStyle(tint: .blue, prominent: true))
                 .frame(maxWidth: .infinity)
-                Button("Parar playlist", systemImage: "stop.fill") {
+                Button(
+                    mainViewModel.stopAtCurrentTrackEnd ? "Parar agora" : "Parar playlist",
+                    systemImage: "stop.fill"
+                ) {
                     mainViewModel.stop()
                 }
                 .buttonStyle(DQPerformanceButtonStyle(tint: .red))
                 .frame(maxWidth: .infinity)
+                Button {
+                    mainViewModel.next()
+                } label: {
+                    Image(systemName: "forward.end.fill")
+                }
+                .buttonStyle(DQPerformanceButtonStyle())
+                .frame(maxWidth: .infinity)
+                .help("Próxima faixa")
             }
             Slider(
                 value: Binding(

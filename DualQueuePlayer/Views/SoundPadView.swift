@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct SoundPadView: View {
@@ -182,7 +183,15 @@ private struct SoundPadCell: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Image(systemName: pad.iconName).font(.system(size: 17)).foregroundStyle(.purple)
                     Text(pad.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                    Text(pad.mode.title).font(.system(size: 10)).foregroundStyle(Color.dqMuted)
+                    HStack(spacing: 4) {
+                        Text(pad.mode.title)
+                        if let shortcut = pad.keyboardShortcut {
+                            Text("• \(KeyboardShortcutFormatter.displayName(for: shortcut))")
+                        }
+                    }
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.dqMuted)
+                    .lineLimit(1)
                 }
                 Spacer()
             }
@@ -237,7 +246,25 @@ struct SoundPadEditorView: View {
             HStack { Text("Volume"); Slider(value: $pad.volume, in: 0...1); Text("\(Int(pad.volume * 100))%") }
             Toggle("Parar outros pads ao tocar", isOn: $pad.stopsOtherPads)
             Toggle("Loop", isOn: $pad.loops)
-            TextField("Atalho opcional", text: Binding(get: { pad.keyboardShortcut ?? "" }, set: { pad.keyboardShortcut = $0.isEmpty ? nil : $0 }))
+            HStack(spacing: 8) {
+                Text("Atalho")
+                    .font(.system(size: 12))
+                ShortcutCaptureField(shortcut: Binding(
+                    get: { pad.keyboardShortcut },
+                    set: { pad.keyboardShortcut = $0 }
+                ))
+                .frame(maxWidth: .infinity, minHeight: 28)
+                if pad.keyboardShortcut != nil {
+                    Button {
+                        pad.keyboardShortcut = nil
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.dqMuted)
+                    .help("Remover atalho")
+                }
+            }
             HStack {
                 Button("Excluir", role: .destructive, action: onDelete)
                 Spacer()
@@ -253,6 +280,121 @@ struct SoundPadEditorView: View {
         let panel = NSOpenPanel()
         panel.allowedFileTypes = ["mp3", "wav", "m4a", "aac", "aiff"]
         if panel.runModal() == .OK { pad.fileURL = panel.url }
+    }
+}
+
+struct ShortcutCaptureField: NSViewRepresentable {
+    @Binding var shortcut: String?
+
+    func makeNSView(context: Context) -> ShortcutCaptureView {
+        let field = ShortcutCaptureView()
+        field.onCapture = { value in
+            shortcut = value
+        }
+        field.shortcut = shortcut
+        return field
+    }
+
+    func updateNSView(_ nsView: ShortcutCaptureView, context: Context) {
+        nsView.shortcut = shortcut
+    }
+}
+
+final class ShortcutCaptureView: NSView, KeyboardShortcutCaptureResponder {
+    var shortcut: String? {
+        didSet { needsDisplay = true }
+    }
+    var onCapture: ((String?) -> Void)?
+    private var captureMonitor: Any?
+    private var isCapturing = false
+
+    override var acceptsFirstResponder: Bool { true }
+
+    deinit {
+        stopCapture()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        startCapture()
+        needsDisplay = true
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        needsDisplay = true
+        return true
+    }
+
+    override func resignFirstResponder() -> Bool {
+        needsDisplay = true
+        return true
+    }
+
+    override func keyDown(with event: NSEvent) {
+        capture(event)
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard isCapturing else { return false }
+        return capture(event)
+    }
+
+    private func startCapture() {
+        stopCapture()
+        isCapturing = true
+        captureMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self,
+                  self.isCapturing,
+                  self.window === event.window else { return event }
+            return self.capture(event) ? nil : event
+        }
+    }
+
+    private func stopCapture() {
+        if let captureMonitor {
+            NSEvent.removeMonitor(captureMonitor)
+            self.captureMonitor = nil
+        }
+        isCapturing = false
+        needsDisplay = true
+    }
+
+    @discardableResult
+    private func capture(_ event: NSEvent) -> Bool {
+        if event.keyCode == 53 {
+            onCapture?(nil)
+            stopCapture()
+            return true
+        }
+        guard let shortcut = KeyboardShortcutFormatter.identifier(for: event) else { return false }
+        onCapture?(shortcut)
+        stopCapture()
+        return true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let rect = bounds.insetBy(dx: 1, dy: 1)
+        let path = NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6)
+        NSColor.controlBackgroundColor.setFill()
+        path.fill()
+        if window?.firstResponder === self {
+            NSColor.controlAccentColor.setStroke()
+        } else {
+            NSColor.separatorColor.setStroke()
+        }
+        path.lineWidth = window?.firstResponder === self ? 2 : 1
+        path.stroke()
+
+        let title = isCapturing ? "Pressione uma tecla…" : KeyboardShortcutFormatter.displayName(for: shortcut)
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+            .foregroundColor: window?.firstResponder === self ? NSColor.controlAccentColor : NSColor.secondaryLabelColor
+        ]
+        let size = title.size(withAttributes: attributes)
+        title.draw(
+            at: NSPoint(x: max(8, (bounds.width - size.width) / 2), y: (bounds.height - size.height) / 2),
+            withAttributes: attributes
+        )
     }
 }
 

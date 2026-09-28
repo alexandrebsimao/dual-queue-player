@@ -409,9 +409,11 @@ final class AudioEngineManager: NSObject, ObservableObject {
     private func updatePerformanceProgress(for id: UUID) {
         guard let duration = performanceDurations[id] else { return }
         if performancePlaying.contains(id), let startDate = performanceStartDates[id] {
-            let elapsed = max(0, Date().timeIntervalSince(startDate))
+            let now = Date()
+            let elapsed = max(0, now.timeIntervalSince(startDate))
             let offset = (performanceOffsets[id] ?? 0) + elapsed
             performanceOffsets[id] = performanceLoops.contains(id) ? offset.truncatingRemainder(dividingBy: duration) : min(offset, duration)
+            performanceStartDates[id] = now
         }
         onPerformanceItemProgress?(id, performanceOffsets[id] ?? 0, duration)
     }
