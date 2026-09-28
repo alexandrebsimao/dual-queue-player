@@ -30,6 +30,12 @@ O DualQueue Player mantém duas filas independentes, um único player principal 
 - Atalhos de operação e proteção contra atalhos enquanto um campo de texto está em edição.
 - Ícone do aplicativo configurado por Asset Catalog.
 
+## Documentação de propostas
+
+- [Modo Performance — proposta de produto e UX](docs/modo-performance-ux.md)
+- [Plano de implementação do Modo Performance](docs/plano-implementacao-performance.md)
+- [Protótipo navegável do Modo Performance](prototypes/performance/index.html)
+
 ## Fora de escopo
 
 O projeto não pretende ser uma DAW ou software de DJ. Não fazem parte do objetivo atual:

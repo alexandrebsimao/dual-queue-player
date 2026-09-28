@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>DualQueue Player — Protótipo Performance</title>
+    <style>
+      :root {
+        --bg: #0c1117;
+        --panel: #131b22;
+        --panel-raised: #1b242e;
+        --row: #171f26;
+        --line: rgba(255, 255, 255, .075);
+        --text: rgba(255, 255, 255, .94);
+        --soft: rgba(255, 255, 255, .78);
+        --muted: rgba(255, 255, 255, .62);
+        --blue: #4b9bff;
+        --orange: #ff9d42;
+        --green: #4ade80;
+        --purple: #b477ff;
+        --red: #ff6b72;
+        --radius: 12px;
+      }
+
+      * { box-sizing: border-box; }
+      body { margin: 0; min-width: 1080px; min-height: 100vh; background: var(--bg); color: var(--text); font: 13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif; }
+      button, input, select { font: inherit; }
+      button { color: inherit; }
+
+      .app { min-height: 100vh; padding: 12px 14px 14px; }
+      .window { max-width: 1500px; margin: 0 auto; }
+      .topbar { height: 32px; display: flex; align-items: center; justify-content: space-between; padding: 0 8px; margin-bottom: 12px; }
+      .app-title { display: flex; align-items: center; gap: 9px; color: var(--soft); font-size: 13px; font-weight: 650; }
+      .app-mark { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 7px; background: linear-gradient(145deg, #5da5ff, #8768e9); color: #0d1621; font-size: 9px; font-weight: 900; }
+      .top-actions { display: flex; align-items: center; gap: 8px; }
+      .top-button, .button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 29px; padding: 5px 10px; border: 1px solid rgba(255, 255, 255, .16); border-radius: 7px; background: rgba(255, 255, 255, .055); color: var(--soft); cursor: pointer; transition: .16s ease; }
+      .top-button:hover, .button:hover { background: rgba(255, 255, 255, .1); color: var(--text); }
+      .button.primary { background: var(--blue); border-color: var(--blue); color: #071322; font-weight: 700; }
+      .button.primary:hover { background: #72b2ff; }
+      .button.danger { background: rgba(255, 107, 114, .13); border-color: rgba(255, 107, 114, .3); color: #ff9ba0; }
+      .button.ghost { background: transparent; }
+
+      .workspace { display: grid; grid-template-columns: minmax(0, 1fr) 285px; gap: 12px; align-items: start; }
+      .main-column { min-width: 0; display: grid; gap: 12px; }
+      .queue-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+      .lower-grid { display: grid; grid-template-columns: minmax(0, 1fr) 270px; gap: 12px; }
+      .side-column { display: grid; gap: 12px; }
+
+      .panel { min-width: 0; padding: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+      .panel-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+      .panel-heading h2 { margin: 0; font-size: 16px; font-weight: 650; letter-spacing: -.02em; }
+      .panel-heading h3 { margin: 0; font-size: 14px; font-weight: 650; }
+      .panel-heading .spacer { flex: 1; }
+      .icon-title { color: var(--purple); font-size: 20px; }
+      .subtle { color: var(--muted); font-size: 12px; }
+      .eyebrow { color: var(--blue); font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+
+      .view { display: none; }
+      .view.active { display: block; }
+      .view-execution { grid-column: 1 / -1; }
+
+      .queue-card { min-height: 390px; position: relative; }
+      .queue-card.active { box-shadow: inset 0 0 0 2px var(--blue); }
+      .queue-card.queue-b.active { box-shadow: inset 0 0 0 2px var(--orange); }
+      .queue-header { display: flex; align-items: center; gap: 10px; }
+      .queue-letter { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 12px; color: white; font-size: 22px; font-weight: 800; background: linear-gradient(145deg, #519fff, #2571cf); }
+      .queue-b .queue-letter { background: linear-gradient(145deg, #ffb260, #e36e18); }
+      .queue-title h2 { margin: 0 0 3px; font-size: 20px; letter-spacing: -.03em; }
+      .queue-title p { margin: 0; color: var(--muted); font-size: 12px; }
+      .badge { display: inline-flex; align-items: center; padding: 4px 9px; border-radius: 99px; font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; background: rgba(74, 222, 128, .18); color: var(--green); }
+      .badge.inactive { background: rgba(255, 255, 255, .09); color: var(--muted); }
+
+      .action-row { display: flex; align-items: center; gap: 8px; margin: 13px 0 10px; }
+      .action-row .hint { margin-left: auto; color: var(--muted); font-size: 10px; }
+      .track-list { overflow: hidden; border-radius: 9px; background: rgba(23, 31, 38, .6); }
+      .track-header, .track-row { display: grid; grid-template-columns: 31px minmax(0, 1fr) 62px; gap: 6px; align-items: center; padding: 8px 11px; }
+      .track-header { color: var(--muted); font-size: 11px; font-weight: 600; border-bottom: 1px solid var(--line); }
+      .track-row { min-height: 34px; color: var(--soft); border-bottom: 1px solid rgba(255, 255, 255, .045); cursor: pointer; }
+      .track-row:last-child { border-bottom: 0; }
+      .track-row:hover, .track-row.selected { background: rgba(75, 155, 255, .2); }
+      .track-row.playing { color: white; }
+      .track-row .track-icon { color: var(--muted); }
+      .track-row.playing .track-icon { color: var(--blue); }
+      .track-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .track-duration { color: var(--muted); text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+      .queue-controls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; margin-top: 11px; }
+      .control-button { min-height: 56px; display: grid; place-items: center; gap: 4px; padding: 7px; border: 0; border-radius: 9px; background: var(--panel-raised); color: var(--soft); cursor: pointer; }
+      .control-button:hover { background: #263340; color: white; }
+      .control-button.prominent { background: rgba(75, 155, 255, .88); color: white; }
+      .control-icon { font-size: 17px; line-height: 1; }
+      .control-label { font-size: 11px; }
+
+      .sound-panel { min-height: 275px; }
+      .sound-heading { display: flex; align-items: center; gap: 10px; }
+      .sound-heading .spacer { flex: 1; }
+      .page-select { width: 130px; }
+      .mini-buttons { display: flex; gap: 5px; }
+      .mini-button { width: 27px; height: 27px; display: grid; place-items: center; padding: 0; border: 1px solid rgba(255,255,255,.16); border-radius: 6px; background: rgba(255,255,255,.055); color: var(--soft); cursor: pointer; }
+      .mini-button:hover { background: rgba(255,255,255,.1); }
+      .pad-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+      .pad { min-height: 78px; display: flex; align-items: flex-start; gap: 9px; padding: 10px; border: 1px solid rgba(180, 119, 255, .2); border-radius: 9px; background: var(--row); cursor: pointer; text-align: left; }
+      .pad:hover, .pad.active { background: rgba(180, 119, 255, .14); border-color: rgba(180, 119, 255, .65); }
+      .pad-number { width: 25px; height: 25px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 6px; background: rgba(180, 119, 255, .8); color: white; font-size: 12px; font-weight: 800; }
+      .pad-content { min-width: 0; }
+      .pad-icon { margin-bottom: 5px; color: var(--purple); font-size: 16px; }
+      .pad-name { display: block; overflow: hidden; color: var(--soft); font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+      .pad-mode { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
+      .pad-more { margin-left: auto; color: var(--muted); }
+
+      .settings-panel { min-height: 275px; }
+      .settings-block { margin-bottom: 14px; }
+      .settings-label { margin-bottom: 7px; color: var(--muted); font-size: 11px; }
+      .output-select { width: 100%; padding: 9px; text-align: left; background: var(--panel-raised); border-radius: 7px; }
+      .divider { height: 1px; margin: 14px 0; background: var(--line); }
+      .range-row { display: flex; align-items: center; gap: 8px; margin: 9px 0; color: var(--muted); font-size: 11px; }
+      .range-row span:first-child { flex: 1; }
+      input[type="range"] { width: 100%; accent-color: var(--blue); }
+
+      .player-panel { min-height: 224px; }
+      .now-playing { display: flex; align-items: center; gap: 12px; margin: 13px 0; }
+      .music-icon { width: 48px; height: 48px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 10px; background: var(--panel-raised); font-size: 22px; }
+      .now-title { overflow: hidden; font-size: 15px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+      .now-subtitle { margin-top: 3px; color: var(--muted); font-size: 11px; }
+      .timeline { width: 100%; margin: 5px 0 0; }
+      .time-row { display: flex; justify-content: space-between; margin-top: 2px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+      .player-controls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; margin-top: 12px; }
+      .volume-row { display: flex; align-items: center; gap: 8px; margin-top: 12px; color: var(--muted); }
+      .volume-row .volume-icon { font-size: 16px; }
+      .volume-value { width: 34px; text-align: right; font-size: 11px; }
+      .upcoming-panel { min-height: 169px; }
+      .upcoming-track { display: flex; align-items: center; gap: 10px; margin: 14px 0; }
+      .upcoming-icon { width: 44px; height: 44px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 9px; background: var(--panel-raised); font-size: 18px; }
+      .upcoming-name { overflow: hidden; color: var(--soft); text-overflow: ellipsis; white-space: nowrap; }
+      .upcoming-duration { margin-top: 3px; color: var(--muted); font-size: 11px; }
+      .mode-line { display: flex; align-items: center; gap: 10px; padding-top: 11px; border-top: 1px solid var(--line); }
+      .mode-symbol { color: var(--blue); font-size: 22px; }
+      .mode-title { color: var(--soft); }
+      .mode-caption { margin-top: 2px; color: var(--muted); font-size: 10px; }
+
+      .performance-panel { min-height: 545px; }
+      .performance-header { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+      .performance-header .spacer { flex: 1; }
+      .performance-header h1 { margin: 3px 0 4px; font-size: 21px; letter-spacing: -.035em; }
+      .performance-header p { margin: 0; color: var(--muted); font-size: 11px; }
+      .display-toggle { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); }
+      .display-toggle button { padding: 5px 8px; border: 0; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer; font-size: 10px; }
+      .display-toggle button.active { background: var(--panel-raised); color: var(--text); }
+      .performance-actions { display: flex; gap: 7px; }
+      .scene-tabs { display: flex; gap: 6px; overflow: hidden; margin-bottom: 12px; }
+      .scene-tab { flex: 0 0 auto; padding: 7px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--row); color: var(--muted); cursor: pointer; font-size: 11px; }
+      .scene-tab.active { background: rgba(75, 155, 255, .2); border-color: rgba(75, 155, 255, .65); color: white; }
+      .active-strip { display: flex; align-items: center; gap: 9px; min-height: 55px; margin-bottom: 12px; padding: 8px 10px; border: 1px solid rgba(74, 222, 128, .21); border-radius: 9px; background: rgba(74, 222, 128, .055); }
+      .active-label { color: var(--green); font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+      .active-list { display: flex; flex-wrap: wrap; gap: 6px; }
+      .active-item { display: inline-flex; align-items: center; gap: 7px; padding: 6px 8px; border-radius: 6px; background: rgba(255,255,255,.07); color: var(--soft); font-size: 11px; }
+      .playing-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px rgba(74, 222, 128, .12); }
+      .active-item small { color: var(--muted); }
+      .icon-button { width: 20px; height: 20px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer; }
+      .icon-button:hover { background: rgba(255,255,255,.1); color: white; }
+      .performance-groups { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+      .cue-group { min-width: 0; padding: 11px; border-radius: 9px; background: rgba(23, 31, 38, .64); }
+      .cue-group-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; }
+      .cue-group-name { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 650; }
+      .group-dot { width: 7px; height: 7px; border-radius: 50%; }
+      .group-dot.blue { background: var(--blue); }
+      .group-dot.orange { background: var(--orange); }
+      .group-dot.purple { background: var(--purple); }
+      .group-count { color: var(--muted); font-size: 10px; }
+      .cue-list { display: grid; gap: 7px; }
+      .cue { width: 100%; min-height: 55px; display: grid; grid-template-columns: 28px minmax(0, 1fr) 19px; align-items: center; gap: 8px; padding: 8px; border: 1px solid rgba(255,255,255,.075); border-radius: 8px; background: var(--row); cursor: pointer; text-align: left; }
+      .cue:hover { background: var(--panel-raised); border-color: rgba(255,255,255,.18); }
+      .cue.playing { border-color: rgba(74, 222, 128, .6); background: rgba(74, 222, 128, .1); }
+      .cue-icon { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 7px; background: rgba(255,255,255,.07); color: var(--soft); }
+      .cue-name { display: block; overflow: hidden; color: var(--soft); font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+      .cue-meta { display: block; margin-top: 2px; color: var(--muted); font-size: 9px; }
+      .cue-action { color: var(--muted); }
+      .cue.playing .cue-action { color: var(--green); }
+      .performance-groups.list-mode { display: block; }
+      .performance-groups.list-mode .cue-group { padding: 0; background: transparent; }
+      .performance-groups.list-mode .cue-group-header { display: none; }
+      .performance-groups.list-mode .cue-list { display: contents; }
+      .performance-groups.list-mode .cue { grid-template-columns: 28px minmax(0, 1fr) 76px 19px; min-height: 48px; margin-bottom: 7px; }
+      .performance-groups.list-mode .cue::after { content: attr(data-category); justify-self: start; padding: 3px 6px; border: 1px solid rgba(255,255,255,.1); border-radius: 5px; color: var(--muted); font-size: 9px; }
+      .scene-timeline { display: grid; grid-template-columns: 145px minmax(0, 1fr) auto; align-items: center; gap: 12px; margin-bottom: 12px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--row); }
+      .scene-clock { white-space: nowrap; color: var(--muted); font-size: 10px; }
+      .scene-clock strong { margin-left: 6px; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; }
+      .scene-clock span { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
+      .scene-timeline input { width: 100%; }
+      .scene-time-actions { display: flex; gap: 5px; }
+      .scene-time-actions .button { min-height: 25px; padding: 4px 8px; font-size: 10px; }
+      .bottom-note { display: flex; align-items: center; gap: 7px; margin-top: 12px; color: var(--muted); font-size: 10px; }
+      .kbd { padding: 3px 6px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel-raised); color: var(--soft); }
+
+      .project-panel { min-height: 420px; }
+      .project-panel-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 15px; }
+      .project-panel h1 { margin: 3px 0 4px; font-size: 23px; letter-spacing: -.035em; }
+      .project-panel p { margin: 0; color: var(--muted); font-size: 12px; }
+      .project-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+      .project-card { min-height: 155px; display: flex; flex-direction: column; justify-content: space-between; padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--row); cursor: pointer; text-align: left; }
+      .project-card:hover, .project-card.featured { border-color: rgba(75,155,255,.58); background: rgba(75,155,255,.1); }
+      .project-symbol { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px; background: rgba(75,155,255,.18); color: var(--blue); font-size: 17px; }
+      .project-card h2 { margin: 13px 0 3px; font-size: 14px; }
+      .project-card p { font-size: 11px; }
+      .project-footer { display: flex; justify-content: space-between; color: var(--muted); font-size: 10px; }
+      .project-arrow { color: var(--blue); font-size: 15px; }
+      .recent-list { display: grid; gap: 1px; overflow: hidden; border-radius: 8px; background: var(--line); }
+      .recent-row { display: grid; grid-template-columns: minmax(0, 1fr) 135px 65px 20px; gap: 8px; align-items: center; padding: 9px 10px; background: var(--row); color: var(--soft); font-size: 11px; }
+      .recent-row span { color: var(--muted); }
+
+      .free-layout { display: grid; grid-template-columns: minmax(0, 1fr) 270px; gap: 12px; }
+      .free-panel { min-height: 370px; }
+      .free-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+      .free-header .spacer { flex: 1; }
+      .free-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; }
+      .free-pad { min-height: 86px; display: flex; flex-direction: column; justify-content: space-between; padding: 10px; border: 1px solid rgba(180,119,255,.2); border-radius: 9px; background: var(--row); cursor: pointer; text-align: left; }
+      .free-pad:hover, .free-pad.active { border-color: rgba(180,119,255,.65); background: rgba(180,119,255,.14); }
+      .free-pad-icon { color: var(--purple); font-size: 16px; }
+      .free-pad-name { color: var(--soft); font-size: 11px; font-weight: 650; }
+      .free-pad-meta { color: var(--muted); font-size: 9px; }
+      .inspector { min-height: 370px; }
+      .inspector-row { display: flex; justify-content: space-between; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; }
+      .inspector-value { color: var(--soft); text-align: right; }
+
+      .settings-layout { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 12px; }
+      .settings-nav { display: grid; align-content: start; gap: 3px; }
+      .settings-nav button { padding: 8px 9px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; text-align: left; font-size: 11px; }
+      .settings-nav button.active { background: rgba(75,155,255,.16); color: var(--text); }
+      .setting-line { display: flex; justify-content: space-between; gap: 25px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+      .setting-line:last-child { border-bottom: 0; }
+      .setting-title { color: var(--soft); font-weight: 650; font-size: 12px; }
+      .setting-description { max-width: 570px; margin-top: 3px; color: var(--muted); font-size: 11px; }
+      .switch { width: 35px; height: 20px; padding: 2px; flex: 0 0 auto; border: 0; border-radius: 99px; background: #34404c; cursor: pointer; }
+      .switch span { display: block; width: 16px; height: 16px; border-radius: 50%; background: #9aa5b5; transition: .16s ease; }
+      .switch.on { background: var(--blue); }
+      .switch.on span { transform: translateX(15px); background: white; }
+
+      .toast { position: fixed; right: 25px; bottom: 22px; display: flex; align-items: center; gap: 8px; padding: 9px 13px; border: 1px solid rgba(255, 157, 66, .35); border-radius: 99px; background: #2c2117; color: var(--soft); box-shadow: 0 12px 35px rgba(0,0,0,.3); opacity: 0; pointer-events: none; transform: translateY(6px); transition: .2s ease; font-size: 12px; }
+      .toast.show { opacity: 1; transform: translateY(0); }
+      .toast-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--orange); }
+
+      @media (max-width: 1190px) {
+        body { min-width: 920px; }
+        .performance-groups { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .cue-group:last-child { grid-column: span 2; }
+        .project-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <div class="window">
+        <header class="topbar">
+          <div class="app-title"><span class="app-mark">DQ</span> DualQueue Player <span class="subtle">· protótipo</span></div>
+          <div class="top-actions">
+            <button class="top-button" data-view="queues">♫ Player</button>
+            <button class="top-button" data-view="projects">✦ Performance</button>
+            <button class="top-button" data-view="free">▦ Sound Pad</button>
+            <button class="top-button" data-view="settings">⚙</button>
+            <button class="top-button" id="open-project">▣ Projeto</button>
+            <button class="top-button" id="save-project">⇩ Salvar</button>
+            <button class="top-button" id="new-project">＋ Novo</button>
+          </div>
+        </header>
+
+        <div class="workspace" id="workspace">
+          <section class="view active" id="view-projects"><div class="main-column"><section class="panel project-panel"><div class="project-panel-header"><div><div class="eyebrow">Performance</div><h1>Escolha um espetáculo</h1><p>Projetos com cenas, grupos e cues para operação ao vivo.</p></div><button class="button primary" id="new-project-main">＋ Novo espetáculo</button></div><div class="project-grid"><button class="project-card featured" data-open-execution><div><div class="project-symbol">✦</div><h2>A Viagem</h2><p>Teatro · 8 cenas · 42 cues</p></div><div class="project-footer"><span>Usado há 2 horas</span><span class="project-arrow">→</span></div></button><button class="project-card" data-open-execution><div><div class="project-symbol" style="color: var(--purple); background: rgba(180,119,255,.16);">◒</div><h2>Festival de Dança</h2><p>Dança · 12 cenas · 67 cues</p></div><div class="project-footer"><span>Ontem</span><span class="project-arrow">→</span></div></button><button class="project-card" data-open-execution><div><div class="project-symbol" style="color: var(--orange); background: rgba(255,157,66,.16);">◌</div><h2>Esquete — A Reunião</h2><p>Esquete · 4 cenas · 19 cues</p></div><div class="project-footer"><span>25 set. 2026</span><span class="project-arrow">→</span></div></button></div><div class="panel-heading" style="margin-top: 22px; margin-bottom: 9px;"><h3>Atividade recente</h3></div><div class="recent-list"><div class="recent-row"><strong>A Viagem</strong><span>Cena 2 · Floresta</span><span style="color: var(--green);">Pronto</span><span>›</span></div><div class="recent-row"><strong>Festival de Dança</strong><span>Cena 8 · Final</span><span style="color: var(--green);">Pronto</span><span>›</span></div><div class="recent-row"><strong>Esquete — A Reunião</strong><span>Cena 1 · Entrada</span><span style="color: var(--green);">Pronto</span><span>›</span></div></div></section></div></section>
+
+          <section class="view view-execution" id="view-execution"><section class="panel performance-panel"><div class="performance-header"><div><div class="eyebrow">A Viagem · Modo espetáculo</div><h1 id="scene-heading">Cena 2 — Floresta</h1><p>Dispare os cues da cena. Sons ativos continuam visíveis durante a navegação.</p></div><div class="spacer"></div><div class="performance-actions"><button class="button ghost" id="previous-scene">← Anterior</button><button class="button" id="next-scene">Próxima →</button><button class="button danger" id="stop-all">■ Parar tudo</button></div></div><div class="scene-tabs" aria-label="Cenas"><button class="scene-tab" data-scene="1">1 · Entrada</button><button class="scene-tab active" data-scene="2">2 · Floresta</button><button class="scene-tab" data-scene="3">3 · Confronto</button><button class="scene-tab" data-scene="4">4 · Travessia</button><button class="scene-tab" data-scene="5">5 · Final</button></div><div class="active-strip"><span class="active-label">Ativos agora</span><div class="active-list" id="active-list"></div><div style="margin-left: auto;"><button class="button ghost" id="pause-all">Ⅱ Pausar tudo</button></div></div><div class="performance-groups"><article class="cue-group"><div class="cue-group-header"><div class="cue-group-name"><span class="group-dot blue"></span>Trilha</div><span class="group-count">3 cues</span></div><div class="cue-list"><button class="cue" data-cue="Trilha — Floresta" data-meta="Loop · 04:12"><span class="cue-icon">♫</span><span><span class="cue-name">Floresta — ambiente</span><span class="cue-meta">Loop · 04:12</span></span><span class="cue-action">▶</span></button><button class="cue" data-cue="Trilha — Tensão" data-meta="Uma vez · 01:36"><span class="cue-icon">♫</span><span><span class="cue-name">Tensão crescente</span><span class="cue-meta">Uma vez · 01:36</span></span><span class="cue-action">▶</span></button><button class="cue" data-cue="Trilha — Final da cena" data-meta="Uma vez · 00:28"><span class="cue-icon">♫</span><span><span class="cue-name">Final da cena</span><span class="cue-meta">Uma vez · 00:28</span></span><span class="cue-action">▶</span></button></div></article><article class="cue-group"><div class="cue-group-header"><div class="cue-group-name"><span class="group-dot orange"></span>Efeitos</div><span class="group-count">4 cues</span></div><div class="cue-list"><button class="cue" data-cue="Passos na mata" data-meta="Uma vez · 00:08"><span class="cue-icon">◌</span><span><span class="cue-name">Passos na mata</span><span class="cue-meta">Uma vez · 00:08</span></span><span class="cue-action">▶</span></button><button class="cue" data-cue="Galho quebrando" data-meta="Uma vez · 00:03"><span class="cue-icon">◌</span><span><span class="cue-name">Galho quebrando</span><span class="cue-meta">Uma vez · 00:03</span></span><span class="cue-action">▶</span></button><button class="cue" data-cue="Impacto" data-meta="Uma vez · 00:05"><span class="cue-icon">◌</span><span><span class="cue-name">Impacto</span><span class="cue-meta">Uma vez · 00:05</span></span><span class="cue-action">▶</span></button><button class="cue" data-cue="Porta antiga" data-meta="Uma vez · 00:06"><span class="cue-icon">◌</span><span><span class="cue-name">Porta antiga</span><span class="cue-meta">Uma vez · 00:06</span></span><span class="cue-action">▶</span></button></div></article><article class="cue-group"><div class="cue-group-header"><div class="cue-group-name"><span class="group-dot purple"></span>Vozes</div><span class="group-count">3 cues</span></div><div class="cue-list"><button class="cue" data-cue="Narrador — atenção" data-meta="Uma vez · 00:12"><span class="cue-icon">◉</span><span><span class="cue-name">Narrador — atenção</span><span class="cue-meta">Uma vez · 00:12</span></span><span class="cue-action">▶</span></button><button class="cue" data-cue="Fala 2 — Onde estamos?" data-meta="Uma vez · 00:06"><span class="cue-icon">◉</span><span><span class="cue-name">Fala 2 — Onde estamos?</span><span class="cue-meta">Uma vez · 00:06</span></span><span class="cue-action">▶</span></button><button class="cue" data-cue="Grito" data-meta="Uma vez · 00:02"><span class="cue-icon">◉</span><span><span class="cue-name">Grito</span><span class="cue-meta">Uma vez · 00:02</span></span><span class="cue-action">▶</span></button></div></article></div><div class="bottom-note"><span class="kbd">Space</span> Pausar / retomar tudo <span class="kbd">Esc</span> Parar todos os sons da cena</div></section></section>
+
+          <section class="view" id="view-free"><div class="main-column"><section class="panel free-panel"><div class="free-header"><div class="panel-heading" style="margin:0;"><span class="icon-title">▦</span><div><h2>Sound Pad</h2><span class="subtle">Página: Vinhetas · 12 pads</span></div></div><span class="free-header spacer"></span><select><option>Vinhetas</option><option>Efeitos</option></select><div class="mini-buttons"><button class="mini-button">＋</button><button class="mini-button">✎</button><button class="mini-button">⌫</button></div></div><div class="free-grid"><button class="free-pad" data-pad="Passos"><span class="free-pad-icon">◌</span><span class="free-pad-name">Passos</span><span class="free-pad-meta">00:08 · uma vez</span></button><button class="free-pad" data-pad="Impacto"><span class="free-pad-icon">✹</span><span class="free-pad-name">Impacto</span><span class="free-pad-meta">00:05 · uma vez</span></button><button class="free-pad" data-pad="Porta"><span class="free-pad-icon">◫</span><span class="free-pad-name">Porta antiga</span><span class="free-pad-meta">00:06 · uma vez</span></button><button class="free-pad" data-pad="Ambiente"><span class="free-pad-icon">◒</span><span class="free-pad-name">Ambiente</span><span class="free-pad-meta">loop · 04:12</span></button><button class="free-pad" data-pad="Sino"><span class="free-pad-icon">♩</span><span class="free-pad-name">Sino</span><span class="free-pad-meta">00:04 · uma vez</span></button><button class="free-pad" data-pad="Grito"><span class="free-pad-icon">◉</span><span class="free-pad-name">Grito</span><span class="free-pad-meta">00:02 · uma vez</span></button><button class="free-pad" data-pad="Transição"><span class="free-pad-icon">↝</span><span class="free-pad-name">Transição</span><span class="free-pad-meta">00:11 · uma vez</span></button><button class="free-pad" data-pad="Tensão"><span class="free-pad-icon">♫</span><span class="free-pad-name">Tensão</span><span class="free-pad-meta">01:36 · uma vez</span></button></div></section></div></section>
+
+          <section class="view" id="view-settings"><section class="panel settings-panel" style="grid-column: 1 / -1;"><div class="panel-heading"><span class="icon-title">⚙</span><h2>Configurações de operação</h2></div><div class="settings-layout"><nav class="settings-nav"><button class="active">Comportamento</button><button>Atalhos</button><button>Áudio</button><button>Projeto</button></nav><div><div class="setting-line"><div><div class="setting-title">Manter sons ativos ao trocar de cena</div><div class="setting-description">Permite que ambientes em loop continuem durante a navegação.</div></div><button class="switch on" aria-label="Manter sons ativos ao trocar de cena"><span></span></button></div><div class="setting-line"><div><div class="setting-title">Parar tudo afeta somente Performance</div><div class="setting-description">Recomendado para não interromper acidentalmente a fila principal.</div></div><button class="switch on" aria-label="Parar tudo afeta somente Performance"><span></span></button></div><div class="setting-line"><div><div class="setting-title">Exigir confirmação ao sair da execução</div><div class="setting-description">Protege contra o fechamento acidental da superfície de operação.</div></div><button class="switch" aria-label="Exigir confirmação ao sair da execução"><span></span></button></div></div></div></section></section>
+
+          <section class="view" id="view-queues"><div class="main-column"><div class="queue-grid"><article class="panel queue-card active"><div class="queue-header"><div class="queue-letter">A</div><div class="queue-title"><h2>Queue A <span class="badge">Tocando</span></h2><p>5 músicas · 24:18</p></div></div><div class="track-list" style="margin-top: 16px;"><div class="track-header"><span>#</span><span>Título</span><span>Duração</span></div><div class="track-row playing"><span>▶</span><span class="track-title">Trilha principal</span><span class="track-duration">04:12</span></div><div class="track-row"><span>2</span><span class="track-title">Transição</span><span class="track-duration">01:36</span></div><div class="track-row"><span>3</span><span class="track-title">Encerramento</span><span class="track-duration">03:28</span></div></div><div class="queue-controls"><button class="control-button"><span class="control-icon">|◀</span><span class="control-label">Anterior</span></button><button class="control-button prominent"><span class="control-icon">Ⅱ</span><span class="control-label">Pausar</span></button><button class="control-button"><span class="control-icon">■</span><span class="control-label">Parar</span></button><button class="control-button"><span class="control-icon">▶|</span><span class="control-label">Próxima</span></button></div></article><article class="panel queue-card queue-b"><div class="queue-header"><div class="queue-letter">B</div><div class="queue-title"><h2>Queue B <span class="badge inactive">Inativa</span></h2><p>3 músicas · 12:42</p></div></div><div class="track-list" style="margin-top: 16px;"><div class="track-header"><span>#</span><span>Título</span><span>Duração</span></div><div class="track-row selected"><span>1</span><span class="track-title">Abertura</span><span class="track-duration">02:18</span></div><div class="track-row"><span>2</span><span class="track-title">Cena de ação</span><span class="track-duration">05:42</span></div><div class="track-row"><span>3</span><span class="track-title">Final</span><span class="track-duration">04:42</span></div></div><div class="queue-controls"><button class="control-button"><span class="control-icon">|◀</span><span class="control-label">Anterior</span></button><button class="control-button"><span class="control-icon">▶</span><span class="control-label">Selecionar</span></button><button class="control-button"><span class="control-icon">■</span><span class="control-label">Parar</span></button><button class="control-button"><span class="control-icon">▶|</span><span class="control-label">Próxima</span></button></div></article></div><div class="lower-grid"><section class="panel sound-panel"><div class="panel-heading"><span class="icon-title">▦</span><h2>Sound Pad</h2><span class="spacer"></span><select class="page-select"><option>Vinhetas</option></select><div class="mini-buttons"><button class="mini-button">＋</button><button class="mini-button">✎</button><button class="mini-button">⌫</button></div></div><div class="pad-grid"><button class="pad"><span class="pad-number">1</span><span class="pad-content"><span class="pad-icon">♫</span><span class="pad-name">Abertura</span><span class="pad-mode">Overlay</span></span><span class="pad-more">···</span></button><button class="pad"><span class="pad-number">2</span><span class="pad-content"><span class="pad-icon">⚡</span><span class="pad-name">Impacto</span><span class="pad-mode">Uma vez</span></span><span class="pad-more">···</span></button><button class="pad"><span class="pad-number">3</span><span class="pad-content"><span class="pad-icon">◉</span><span class="pad-name">Vinheta</span><span class="pad-mode">Ducking</span></span><span class="pad-more">···</span></button><button class="pad"><span class="pad-number">4</span><span class="pad-content"><span class="pad-icon">♩</span><span class="pad-name">Sino</span><span class="pad-mode">Loop</span></span><span class="pad-more">···</span></button></div></section><section class="panel settings-panel"><div class="panel-heading"><span class="icon-title">◖</span><h3>Saídas de Áudio</h3></div><div class="settings-block"><div class="settings-label">Saída principal (Música + Pads)</div><button class="output-select">Dispositivo padrão do macOS</button></div><div class="divider"></div><div class="settings-block"><div class="panel-heading" style="margin-bottom: 9px;"><h3>Ajustes de Ducking</h3></div><div class="range-row"><span>Volume durante ducking</span><span>20%</span></div><input type="range" value="20"><div class="range-row"><span>Fade down</span><span>0.2 s</span></div><div class="range-row"><span>Fade up</span><span>0.4 s</span></div></div></section></div></div></section>
+        </div>
+
+        <div class="side-column" id="side-column"><section class="panel player-panel"><div class="panel-heading"><h2>Reprodução Atual</h2></div><div class="now-playing"><div class="music-icon">♫</div><div style="min-width:0;"><div class="now-title">Trilha principal</div><div class="now-subtitle">Queue A</div></div></div><input class="timeline" type="range" value="31"><div class="time-row"><span>01:24</span><span>04:12</span></div><div class="player-controls"><button class="control-button"><span class="control-icon">|◀</span></button><button class="control-button prominent"><span class="control-icon">Ⅱ</span></button><button class="control-button"><span class="control-icon">■</span></button><button class="control-button"><span class="control-icon">▶|</span></button></div><div class="volume-row"><span class="volume-icon">⌕</span><input type="range" value="78"><span class="volume-value">78%</span></div></section><section class="panel upcoming-panel"><div class="panel-heading"><h2>Próxima faixa</h2></div><div class="upcoming-track"><div class="upcoming-icon">♫</div><div style="min-width:0;"><div class="upcoming-name">Transição</div><div class="upcoming-duration">01:36</div></div></div><div class="mode-line"><span class="mode-symbol">↻</span><div><div class="mode-title">Sequencial</div><div class="mode-caption">Tocará automaticamente</div></div></div></section></div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast"><span class="toast-dot"></span><span id="toast-message">Cue disparado</span></div>
+
+    <script>
+      const views = [...document.querySelectorAll('.view')];
+      const navButtons = [...document.querySelectorAll('[data-view]')];
+      const toast = document.querySelector('#toast');
+      const toastMessage = document.querySelector('#toast-message');
+      let toastTimer;
+      let activeCues = new Map();
+      let currentScene = 2;
+      let pausedAll = false;
+      let sceneSeconds = 84;
+      let sceneTimer = null;
+      const sceneDuration = 522;
+
+      function showToast(message) {
+        toastMessage.textContent = message;
+        toast.classList.add('show');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => toast.classList.remove('show'), 2200);
+      }
+
+      function openView(name) {
+        views.forEach(view => view.classList.toggle('active', view.id === `view-${name}`));
+        const isExecution = name === 'execution';
+        document.querySelector('#side-column').style.display = isExecution ? 'none' : '';
+        document.querySelector('#workspace').style.gridTemplateColumns = isExecution ? '1fr' : '';
+      }
+
+      function updateActiveList() {
+        const list = document.querySelector('#active-list');
+        if (!list) return;
+        if (!activeCues.size) {
+          list.innerHTML = '<span style="color: var(--muted); font-size: 11px;">Nenhum som tocando</span>';
+          return;
+        }
+        list.innerHTML = [...activeCues].map(([name, meta]) => `<span class="active-item"><span class="playing-dot"></span><span>${name}</span><small>${pausedAll ? 'pausado' : meta}</small><button class="icon-button" data-stop-cue="${name}" aria-label="Parar ${name}">×</button></span>`).join('');
+        list.querySelectorAll('[data-stop-cue]').forEach(button => button.addEventListener('click', event => {
+          event.stopPropagation();
+          const name = button.dataset.stopCue;
+          activeCues.delete(name);
+          const cue = [...document.querySelectorAll('.cue')].find(item => item.dataset.cue === name);
+          if (cue) cue.classList.remove('playing');
+          updateActiveList();
+          showToast(`${name} parado`);
+        }));
+      }
+
+      function setScene(sceneNumber) {
+        currentScene = Math.max(1, Math.min(5, sceneNumber));
+        const names = { 1: 'Entrada', 2: 'Floresta', 3: 'Confronto', 4: 'Travessia', 5: 'Final' };
+        document.querySelector('#scene-heading').textContent = `Cena ${currentScene} — ${names[currentScene]}`;
+        document.querySelectorAll('.scene-tab').forEach(tab => tab.classList.toggle('active', Number(tab.dataset.scene) === currentScene));
+        clearInterval(sceneTimer);
+        sceneTimer = null;
+        sceneSeconds = 0;
+        updateSceneClock();
+        showToast(`Cena ${currentScene} — ${names[currentScene]}`);
+      }
+
+      function formatClock(seconds) {
+        return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+      }
+
+      function updateSceneClock() {
+        const time = document.querySelector('#scene-time');
+        const progress = document.querySelector('#scene-progress');
+        const playButton = document.querySelector('#scene-play');
+        if (time) time.textContent = formatClock(sceneSeconds);
+        if (progress) progress.value = sceneSeconds;
+        if (playButton) playButton.textContent = sceneTimer ? 'Ⅱ Pausar tempo' : '▶ Iniciar cena';
+      }
+
+      function toggleSceneClock() {
+        if (sceneTimer) {
+          clearInterval(sceneTimer);
+          sceneTimer = null;
+          showToast('Tempo da cena pausado');
+        } else {
+          sceneTimer = setInterval(() => {
+            sceneSeconds = Math.min(sceneDuration, sceneSeconds + 1);
+            updateSceneClock();
+            if (sceneSeconds >= sceneDuration) {
+              clearInterval(sceneTimer);
+              sceneTimer = null;
+              showToast('Tempo da cena concluído');
+              updateSceneClock();
+            }
+          }, 1000);
+          showToast('Tempo da cena iniciado');
+        }
+        updateSceneClock();
+      }
+
+      function resetSceneClock() {
+        clearInterval(sceneTimer);
+        sceneTimer = null;
+        sceneSeconds = 0;
+        updateSceneClock();
+        showToast('Tempo da cena zerado');
+      }
+
+      function setDisplayMode(mode) {
+        const groups = document.querySelector('.performance-groups');
+        groups.classList.toggle('list-mode', mode === 'list');
+        document.querySelectorAll('.display-toggle button').forEach(button => button.classList.toggle('active', button.dataset.mode === mode));
+        document.querySelectorAll('.cue').forEach((cue, index) => {
+          const icon = cue.querySelector('.cue-icon');
+          if (!cue.dataset.originalIcon) cue.dataset.originalIcon = icon.textContent;
+          icon.textContent = mode === 'list' ? String(index + 1) : cue.dataset.originalIcon;
+        });
+      }
+
+      function buildPerformanceControls() {
+        const header = document.querySelector('.performance-header');
+        const actions = document.querySelector('.performance-actions');
+        const activeStrip = document.querySelector('.active-strip');
+        const groups = document.querySelector('.performance-groups');
+
+        const displayToggle = document.createElement('div');
+        displayToggle.className = 'display-toggle';
+        displayToggle.innerHTML = '<button class="active" data-mode="list">Lista</button><button data-mode="groups">Cues</button>';
+        header.insertBefore(displayToggle, actions);
+        displayToggle.querySelectorAll('button').forEach(button => button.addEventListener('click', () => setDisplayMode(button.dataset.mode)));
+
+        const timeline = document.createElement('div');
+        timeline.className = 'scene-timeline';
+        timeline.innerHTML = '<div class="scene-clock">Tempo da cena <strong id="scene-time">01:24</strong> <span>/ 08:42</span></div><input id="scene-progress" type="range" min="0" max="522" value="84" aria-label="Tempo da cena"><div class="scene-time-actions"><button class="button" id="scene-play">Ⅱ Pausar tempo</button><button class="button ghost" id="scene-reset">↺ Zerar</button></div>';
+        activeStrip.parentNode.insertBefore(timeline, activeStrip);
+
+        document.querySelector('#scene-play').addEventListener('click', toggleSceneClock);
+        document.querySelector('#scene-reset').addEventListener('click', resetSceneClock);
+        document.querySelector('#scene-progress').addEventListener('input', event => {
+          sceneSeconds = Number(event.target.value);
+          updateSceneClock();
+        });
+        groups.querySelectorAll('.cue').forEach((cue, index) => {
+          cue.dataset.order = String(index + 1);
+          cue.dataset.category = cue.closest('.cue-group').querySelector('.cue-group-name').textContent.trim();
+        });
+        document.querySelector('.performance-header p').textContent = 'Execute a cena em sequência ou alterne para cues agrupadas; a classificação acompanha cada faixa.';
+        setDisplayMode('list');
+        updateSceneClock();
+      }
+
+      function stopAll() {
+        activeCues.clear();
+        pausedAll = false;
+        document.querySelectorAll('.cue').forEach(cue => cue.classList.remove('playing'));
+        const pauseButton = document.querySelector('#pause-all');
+        if (pauseButton) pauseButton.textContent = 'Ⅱ Pausar tudo';
+        updateActiveList();
+        showToast('Todos os sons foram parados');
+      }
+
+      navButtons.forEach(button => button.addEventListener('click', () => openView(button.dataset.view)));
+      document.querySelectorAll('[data-open-execution]').forEach(card => card.addEventListener('click', () => openView('execution')));
+      document.querySelector('#open-project').addEventListener('click', () => openView('projects'));
+      document.querySelector('#save-project').addEventListener('click', () => showToast('Projeto salvo'));
+      document.querySelector('#new-project').addEventListener('click', () => showToast('Novo projeto · protótipo de fluxo'));
+      document.querySelector('#new-project-main').addEventListener('click', () => showToast('Novo espetáculo · protótipo de fluxo'));
+      document.querySelectorAll('.scene-tab').forEach(tab => tab.addEventListener('click', () => setScene(Number(tab.dataset.scene))));
+      document.querySelector('#previous-scene').addEventListener('click', () => setScene(currentScene - 1));
+      document.querySelector('#next-scene').addEventListener('click', () => setScene(currentScene + 1));
+      document.querySelector('#stop-all').addEventListener('click', stopAll);
+
+      document.querySelectorAll('.cue').forEach(cue => cue.addEventListener('click', () => {
+        const name = cue.dataset.cue;
+        if (activeCues.has(name)) {
+          activeCues.delete(name);
+          cue.classList.remove('playing');
+          showToast(`${name} parado`);
+        } else {
+          activeCues.set(name, cue.dataset.meta);
+          cue.classList.add('playing');
+          pausedAll = false;
+          showToast(`${name} disparado`);
+        }
+        updateActiveList();
+      }));
+
+      document.querySelector('#pause-all').addEventListener('click', event => {
+        if (!activeCues.size) return showToast('Nenhum som ativo');
+        pausedAll = !pausedAll;
+        event.currentTarget.textContent = pausedAll ? '▶ Retomar tudo' : 'Ⅱ Pausar tudo';
+        showToast(pausedAll ? 'Todos os sons pausados' : 'Todos os sons retomados');
+        updateActiveList();
+      });
+
+      document.querySelectorAll('.free-pad, .pad').forEach(pad => pad.addEventListener('click', () => {
+        pad.classList.toggle('active');
+        showToast(`${pad.dataset.pad || pad.querySelector('.pad-name')?.textContent || 'Pad'} ${pad.classList.contains('active') ? 'disparado' : 'parado'}`);
+      }));
+      document.querySelectorAll('.switch').forEach(toggle => toggle.addEventListener('click', () => toggle.classList.toggle('on')));
+      document.addEventListener('keydown', event => {
+        if (event.target.matches('input, textarea, select')) return;
+        if (event.code === 'Escape') stopAll();
+        if (event.code === 'Space' && document.querySelector('#view-execution').classList.contains('active')) { event.preventDefault(); document.querySelector('#pause-all').click(); }
+      });
+
+      buildPerformanceControls();
+      updateActiveList();
+    </script>
+  </body>
+</html>
