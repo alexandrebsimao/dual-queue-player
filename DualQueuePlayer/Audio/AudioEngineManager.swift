@@ -27,6 +27,8 @@ final class AudioEngineManager: NSObject, ObservableObject {
     private var performanceDurations: [UUID: TimeInterval] = [:]
     private var performancePausedTimes: [UUID: TimeInterval] = [:]
     private var performanceLoops: [UUID: Bool] = [:]
+    private var performanceTimeOffsets: [UUID: TimeInterval] = [:]
+    private var performanceShouldPlay: [UUID: Bool] = [:]
     private var scheduledFile: AVAudioFile?
     private var playbackStartTime: TimeInterval = 0
     private var progressTimer: Timer?
@@ -189,6 +191,8 @@ final class AudioEngineManager: NSObject, ObservableObject {
         performanceDurations[id] = duration
         performancePausedTimes[id] = 0
         performanceLoops[id] = loops
+        performanceTimeOffsets[id] = 0
+        performanceShouldPlay[id] = true
         player.volume = volume
         schedulePerformanceFile(id: id, player: player, file: file, loops: loops, token: token)
         if !engine.isRunning { try engine.start() }
@@ -199,13 +203,44 @@ final class AudioEngineManager: NSObject, ObservableObject {
     func pausePerformanceItem(id: UUID) {
         guard let player = performancePlayers[id] else { return }
         performancePausedTimes[id] = performanceCurrentTime(id: id)
+        performanceShouldPlay[id] = false
         player.pause()
     }
 
     func resumePerformanceItem(id: UUID) {
         guard let player = performancePlayers[id], performanceFiles[id] != nil else { return }
         if !engine.isRunning { try? engine.start() }
+        performanceShouldPlay[id] = true
         player.play()
+    }
+
+    func seekPerformanceItem(id: UUID, to time: TimeInterval, resume: Bool) {
+        guard let player = performancePlayers[id],
+              let file = performanceFiles[id],
+              let duration = performanceDurations[id],
+              file.fileFormat.sampleRate > 0 else { return }
+
+        let frameDuration = 1 / file.fileFormat.sampleRate
+        let clamped = min(max(time, 0), max(0, duration - frameDuration))
+        let frame = AVAudioFramePosition(clamped * file.fileFormat.sampleRate)
+        guard frame < file.length else { return }
+
+        let token = UUID()
+        performanceTokens[id] = token
+        performancePausedTimes[id] = clamped
+        performanceTimeOffsets[id] = clamped
+        performanceShouldPlay[id] = resume
+        player.stop()
+        schedulePerformanceSegment(
+            id: id,
+            player: player,
+            file: file,
+            startingFrame: frame,
+            loops: performanceLoops[id] == true,
+            token: token
+        )
+        if !engine.isRunning { try? engine.start() }
+        if resume { player.play() }
     }
 
     func stopPerformanceItem(id: UUID) {
@@ -215,6 +250,8 @@ final class AudioEngineManager: NSObject, ObservableObject {
         performanceDurations[id] = nil
         performancePausedTimes[id] = nil
         performanceLoops[id] = nil
+        performanceTimeOffsets[id] = nil
+        performanceShouldPlay[id] = nil
     }
 
     func stopAllPerformanceItems() {
@@ -227,7 +264,8 @@ final class AudioEngineManager: NSObject, ObservableObject {
         }
         if let nodeTime = player.lastRenderTime.flatMap({ player.playerTime(forNodeTime: $0) }), nodeTime.sampleRate > 0 {
             let elapsed = max(0, Double(nodeTime.sampleTime) / nodeTime.sampleRate)
-            return performanceLoops[id] == true ? elapsed.truncatingRemainder(dividingBy: duration) : min(duration, elapsed)
+            let logicalTime = (performanceTimeOffsets[id] ?? 0) + elapsed
+            return performanceLoops[id] == true ? logicalTime.truncatingRemainder(dividingBy: duration) : min(duration, logicalTime)
         }
         return min(duration, performancePausedTimes[id] ?? 0)
     }
@@ -249,6 +287,7 @@ final class AudioEngineManager: NSObject, ObservableObject {
                       self.performanceFiles[id] != nil else { return }
                 if loops {
                     self.performancePausedTimes[id] = 0
+                    self.performanceTimeOffsets[id] = 0
                     self.schedulePerformanceFile(id: id, player: player, file: file, loops: loops, token: token)
                     player.play()
                 } else {
@@ -256,6 +295,32 @@ final class AudioEngineManager: NSObject, ObservableObject {
                     self.performanceFiles[id] = nil
                     self.performanceDurations[id] = nil
                     self.performanceLoops[id] = nil
+                    self.performanceTimeOffsets[id] = nil
+                    self.performanceShouldPlay[id] = nil
+                    self.onPerformanceFinished?(id)
+                }
+            }
+        }
+    }
+
+    private func schedulePerformanceSegment(id: UUID, player: AVAudioPlayerNode, file: AVAudioFile, startingFrame: AVAudioFramePosition, loops: Bool, token: UUID) {
+        player.scheduleSegment(file, startingFrame: startingFrame, frameCount: AVAudioFrameCount(file.length - startingFrame), at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self,
+                      self.performanceTokens[id] == token,
+                      self.performanceFiles[id] != nil else { return }
+                if loops {
+                    self.performancePausedTimes[id] = 0
+                    self.performanceTimeOffsets[id] = 0
+                    self.schedulePerformanceFile(id: id, player: player, file: file, loops: loops, token: token)
+                    if self.performanceShouldPlay[id] == true { player.play() }
+                } else {
+                    self.performancePausedTimes[id] = self.performanceDurations[id] ?? 0
+                    self.performanceFiles[id] = nil
+                    self.performanceDurations[id] = nil
+                    self.performanceLoops[id] = nil
+                    self.performanceTimeOffsets[id] = nil
+                    self.performanceShouldPlay[id] = nil
                     self.onPerformanceFinished?(id)
                 }
             }

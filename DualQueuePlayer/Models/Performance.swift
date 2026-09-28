@@ -91,6 +91,20 @@ enum PerformanceTransition: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum PerformanceMixBehavior: String, Codable, CaseIterable, Identifiable {
+    case overlay
+    case interruptOthers
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .overlay: "Permitir sobreposição"
+        case .interruptOthers: "Interromper outras cues"
+        }
+    }
+}
+
 struct PerformanceProject: Identifiable, Codable {
     let id: UUID
     var name: String
@@ -150,6 +164,7 @@ struct PerformanceItem: Identifiable, Codable {
     var volume: Double
     var playback: PerformancePlayback
     var transition: PerformanceTransition
+    var mixBehavior: PerformanceMixBehavior
     var keyboardShortcut: String?
     var isMissing: Bool
 
@@ -162,6 +177,7 @@ struct PerformanceItem: Identifiable, Codable {
         volume: Double = 1,
         playback: PerformancePlayback = .once,
         transition: PerformanceTransition = .stopOnSceneChange,
+        mixBehavior: PerformanceMixBehavior = .overlay,
         keyboardShortcut: String? = nil,
         isMissing: Bool = false
     ) {
@@ -173,8 +189,29 @@ struct PerformanceItem: Identifiable, Codable {
         self.volume = volume
         self.playback = playback
         self.transition = transition
+        self.mixBehavior = mixBehavior
         self.keyboardShortcut = keyboardShortcut
         self.isMissing = isMissing
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, classification, fileURL, duration, volume
+        case playback, transition, mixBehavior, keyboardShortcut, isMissing
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        name = try values.decode(String.self, forKey: .name)
+        classification = try values.decodeIfPresent(PerformanceClassification.self, forKey: .classification) ?? .other
+        fileURL = try values.decodeIfPresent(URL.self, forKey: .fileURL)
+        duration = try values.decodeIfPresent(TimeInterval.self, forKey: .duration) ?? 0
+        volume = try values.decodeIfPresent(Double.self, forKey: .volume) ?? 1
+        playback = try values.decodeIfPresent(PerformancePlayback.self, forKey: .playback) ?? .once
+        transition = try values.decodeIfPresent(PerformanceTransition.self, forKey: .transition) ?? .stopOnSceneChange
+        mixBehavior = try values.decodeIfPresent(PerformanceMixBehavior.self, forKey: .mixBehavior) ?? .overlay
+        keyboardShortcut = try values.decodeIfPresent(String.self, forKey: .keyboardShortcut)
+        isMissing = try values.decodeIfPresent(Bool.self, forKey: .isMissing) ?? true
     }
 
     var formattedDuration: String {

@@ -198,6 +198,7 @@ final class PerformanceViewModel: ObservableObject {
         classification: PerformanceClassification? = nil,
         playback: PerformancePlayback? = nil,
         transition: PerformanceTransition? = nil,
+        mixBehavior: PerformanceMixBehavior? = nil,
         volume: Double? = nil
     ) {
         guard let projectIndex = selectedProjectIndex,
@@ -206,6 +207,7 @@ final class PerformanceViewModel: ObservableObject {
         if let classification { projects[projectIndex].scenes[sceneIndex].items[itemIndex].classification = classification }
         if let playback { projects[projectIndex].scenes[sceneIndex].items[itemIndex].playback = playback }
         if let transition { projects[projectIndex].scenes[sceneIndex].items[itemIndex].transition = transition }
+        if let mixBehavior { projects[projectIndex].scenes[sceneIndex].items[itemIndex].mixBehavior = mixBehavior }
         if let volume { projects[projectIndex].scenes[sceneIndex].items[itemIndex].volume = min(1, max(0, volume)) }
         onChange?()
     }
@@ -257,6 +259,11 @@ final class PerformanceViewModel: ObservableObject {
             return
         }
         do {
+            if playableItem.mixBehavior == .interruptOthers {
+                for activeID in Array(activeItems.keys) where activeID != itemID {
+                    stop(activeID)
+                }
+            }
             let duration = try audio.playPerformanceItem(id: itemID, url: url, volume: Float(playableItem.volume), loops: playableItem.playback == .loop)
             activeItems[itemID] = ActivePerformanceItem(itemID: itemID, state: .playing, currentTime: 0, duration: playableItem.duration > 0 ? playableItem.duration : duration)
             startActiveItemsTimer()
@@ -284,6 +291,14 @@ final class PerformanceViewModel: ObservableObject {
         audio.stopPerformanceItem(id: itemID)
         activeItems[itemID] = nil
         if activeItems.isEmpty { stopActiveItemsTimer() }
+    }
+
+    func seek(_ itemID: UUID, to time: TimeInterval) {
+        guard var active = activeItems[itemID], active.duration > 0 else { return }
+        let clamped = min(max(time, 0), active.duration)
+        audio.seekPerformanceItem(id: itemID, to: clamped, resume: active.state == .playing)
+        active.currentTime = clamped
+        activeItems[itemID] = active
     }
 
     func pauseAll() { activeItems.keys.forEach { pause($0) } }

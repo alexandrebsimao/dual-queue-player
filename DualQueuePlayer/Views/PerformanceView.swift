@@ -342,8 +342,11 @@ struct PerformanceView: View {
                         editingItem = item
                     }, remove: {
                         viewModel.removeItem(item.id)
-                    }, quickConfigure: { classification, playback, transition, volume in
-                        viewModel.updateItemSettings(item.id, classification: classification, playback: playback, transition: transition, volume: volume)
+                    }, seek: { value in
+                        let duration = viewModel.activeItems[item.id]?.duration ?? item.duration
+                        viewModel.seek(item.id, to: value * duration)
+                    }, quickConfigure: { classification, playback, transition, mixBehavior, volume in
+                        viewModel.updateItemSettings(item.id, classification: classification, playback: playback, transition: transition, mixBehavior: mixBehavior, volume: volume)
                     })
                                 .onDrag {
                                     draggedItemID = item.id
@@ -384,10 +387,13 @@ struct PerformanceView: View {
                                 viewModel.stop(item.id)
                             }, edit: {
                                 editingItem = item
-                            }, remove: {
-                                viewModel.removeItem(item.id)
-                            }, quickConfigure: { classification, playback, transition, volume in
-                                viewModel.updateItemSettings(item.id, classification: classification, playback: playback, transition: transition, volume: volume)
+                        }, remove: {
+                            viewModel.removeItem(item.id)
+                        }, seek: { value in
+                            let duration = viewModel.activeItems[item.id]?.duration ?? item.duration
+                            viewModel.seek(item.id, to: value * duration)
+                        }, quickConfigure: { classification, playback, transition, mixBehavior, volume in
+                            viewModel.updateItemSettings(item.id, classification: classification, playback: playback, transition: transition, mixBehavior: mixBehavior, volume: volume)
                             })
                         }
                     }
@@ -538,7 +544,8 @@ private struct PerformanceItemRow: View {
     let stop: () -> Void
     let edit: () -> Void
     let remove: () -> Void
-    let quickConfigure: (PerformanceClassification?, PerformancePlayback?, PerformanceTransition?, Double?) -> Void
+    let seek: (Double) -> Void
+    let quickConfigure: (PerformanceClassification?, PerformancePlayback?, PerformanceTransition?, PerformanceMixBehavior?, Double?) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -592,7 +599,7 @@ private struct PerformanceItemRow: View {
                     Menu("Classificação") {
                         ForEach(PerformanceClassification.allCases) { classification in
                             Button {
-                                quickConfigure(classification, nil, nil, nil)
+                                quickConfigure(classification, nil, nil, nil, nil)
                             } label: {
                                 Label(classification.title, systemImage: classification.symbolName)
                             }
@@ -601,20 +608,27 @@ private struct PerformanceItemRow: View {
                     Menu("Reprodução") {
                         ForEach(PerformancePlayback.allCases) { playback in
                             Button(playback.title) {
-                                quickConfigure(nil, playback, nil, nil)
+                                quickConfigure(nil, playback, nil, nil, nil)
                             }
                         }
                     }
                     Menu("Troca de cena") {
                         ForEach(PerformanceTransition.allCases) { transition in
                             Button(transition.title) {
-                                quickConfigure(nil, nil, transition, nil)
+                                quickConfigure(nil, nil, transition, nil, nil)
+                            }
+                        }
+                    }
+                    Menu("Sobreposição") {
+                        ForEach(PerformanceMixBehavior.allCases) { mixBehavior in
+                            Button(mixBehavior.title) {
+                                quickConfigure(nil, nil, nil, mixBehavior, nil)
                             }
                         }
                     }
                     Slider(value: Binding(
                         get: { item.volume },
-                        set: { quickConfigure(nil, nil, nil, $0) }
+                        set: { quickConfigure(nil, nil, nil, nil, $0) }
                     ), in: 0...1)
                     Button("Remover", role: .destructive, action: remove)
             } label: {
@@ -625,10 +639,13 @@ private struct PerformanceItemRow: View {
             .fixedSize()
             .frame(width: 30)
         }
-            ProgressView(value: progressValue, total: 1)
-                .progressViewStyle(.linear)
+            Slider(value: Binding(
+                get: { progressValue },
+                set: seek
+            ), in: 0...1)
                 .tint(active == nil ? Color.white.opacity(0.22) : (active?.state == .playing ? .green : .orange))
                 .padding(.leading, 40)
+                .disabled(active == nil || progressDuration <= 0)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 8)
@@ -637,9 +654,13 @@ private struct PerformanceItemRow: View {
     }
 
     private var progressValue: Double {
-        let duration = active?.duration ?? item.duration
+        let duration = progressDuration
         guard duration > 0, duration.isFinite else { return 0 }
         return min(1, max(0, (active?.currentTime ?? 0) / duration))
+    }
+
+    private var progressDuration: TimeInterval {
+        active?.duration ?? item.duration
     }
 
     private func format(_ time: TimeInterval) -> String {
@@ -708,6 +729,10 @@ private struct PerformanceItemEditorView: View {
             Picker("Troca de cena", selection: $item.transition) {
                 ForEach(PerformanceTransition.allCases) { transition in Text(transition.title).tag(transition) }
             }
+            Toggle("Permitir sobreposição com outras cues", isOn: Binding(
+                get: { item.mixBehavior == .overlay },
+                set: { item.mixBehavior = $0 ? .overlay : .interruptOthers }
+            ))
             HStack {
                 Text("Volume")
                 Slider(value: $item.volume, in: 0...1)
