@@ -68,3 +68,24 @@ struct DQIconButton: View {
         .buttonStyle(.plain)
     }
 }
+
+struct DQPerformanceButtonStyle: ButtonStyle {
+    var tint: Color = .blue
+    var prominent = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(prominent ? Color.white : Color.white.opacity(0.9))
+            .frame(minHeight: 28)
+            .padding(.horizontal, 10)
+            .background(prominent ? tint.opacity(configuration.isPressed ? 0.65 : 0.9) : Color.dqPanelRaised.opacity(configuration.isPressed ? 0.7 : 1))
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(tint.opacity(prominent ? 0.9 : 0.45), lineWidth: 1)
+            }
+            .opacity(configuration.isPressed ? 0.85 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}

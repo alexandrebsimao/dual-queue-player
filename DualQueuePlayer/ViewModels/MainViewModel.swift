@@ -10,8 +10,10 @@ enum PlaybackState: Equatable {
 
 @MainActor
 final class MainViewModel: ObservableObject {
+    @Published var workspaceMode: WorkspaceMode = .player
     @Published var queueA: QueueViewModel
     @Published var queueB: QueueViewModel
+    @Published var performance: PerformanceViewModel
     @Published var activeQueue: QueueIdentifier
     @Published var currentTrack: Track?
     @Published var currentQueue: QueueIdentifier?
@@ -44,7 +46,13 @@ final class MainViewModel: ObservableObject {
         padPages = project.padPages
         audio = AudioEngineManager()
         audio.volume = Float(project.masterVolume)
+        performance = PerformanceViewModel(
+            projects: project.performanceProjects,
+            selectedProjectID: project.selectedPerformanceProjectID,
+            audio: audio
+        )
         wireViewModels()
+        performance.onChange = { [weak self] in self?.persist() }
         configureAudioCallbacks()
         configureShortcuts()
     }
@@ -200,6 +208,10 @@ final class MainViewModel: ObservableObject {
         shortcutManager.isEnabled = enabled
     }
 
+    func setWorkspaceMode(_ mode: WorkspaceMode) {
+        workspaceMode = mode
+    }
+
     func saveProject() {
         if currentProjectURL == nil { saveProjectAs() }
         else { persist() }
@@ -279,6 +291,10 @@ final class MainViewModel: ObservableObject {
     }
 
     private func handleShortcut(_ key: String) {
+        if workspaceMode == .performance {
+            performance.handleShortcut(key)
+            return
+        }
         switch key {
         case "space": togglePlayPause()
         case "escape": stop()
@@ -325,7 +341,18 @@ final class MainViewModel: ObservableObject {
     }
 
     private func makeProject() -> AppProject {
-        AppProject(queueA: queueA.queue, queueB: queueB.queue, activeQueue: activeQueue, masterVolume: masterVolume, padPages: padPages, duckVolume: duckingController.duckVolume, duckFadeDown: duckingController.fadeDownDuration, duckFadeUp: duckingController.fadeUpDuration)
+        AppProject(
+            queueA: queueA.queue,
+            queueB: queueB.queue,
+            activeQueue: activeQueue,
+            masterVolume: masterVolume,
+            padPages: padPages,
+            duckVolume: duckingController.duckVolume,
+            duckFadeDown: duckingController.fadeDownDuration,
+            duckFadeUp: duckingController.fadeUpDuration,
+            performanceProjects: performance.projects,
+            selectedPerformanceProjectID: performance.selectedProjectID
+        )
     }
 
     private func persist() {
@@ -348,6 +375,7 @@ final class MainViewModel: ObservableObject {
         duckingController.duckVolume = project.duckVolume
         duckingController.fadeDownDuration = project.duckFadeDown
         duckingController.fadeUpDuration = project.duckFadeUp
+        performance.load(projects: project.performanceProjects, selectedProjectID: project.selectedPerformanceProjectID)
         currentTrack = nil
         currentQueue = nil
         playbackState = .stopped
