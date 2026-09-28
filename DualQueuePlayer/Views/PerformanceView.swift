@@ -167,6 +167,9 @@ struct PerformanceView: View {
                 Text(viewModel.selectedScene?.name ?? "Nenhuma cena")
                     .font(.system(size: 18, weight: .semibold))
                 Spacer()
+                Text("Visualização")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.dqMuted)
                 Picker("Visualização", selection: Binding(
                     get: { viewModel.displayMode },
                     set: { viewModel.updatePerformanceSettings(displayMode: $0) }
@@ -176,6 +179,7 @@ struct PerformanceView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+                .labelsHidden()
                 .frame(width: 190)
                 Button {
                     viewModel.addItem()
@@ -583,7 +587,7 @@ private struct PerformanceItemRow: View {
                     Button(action: stop) { Image(systemName: "stop.fill") }
                         .buttonStyle(.bordered)
                 }
-                Menu {
+            Menu {
                     Button("Editar", action: edit)
                     Menu("Classificação") {
                         ForEach(PerformanceClassification.allCases) { classification in
@@ -613,12 +617,14 @@ private struct PerformanceItemRow: View {
                         set: { quickConfigure(nil, nil, nil, $0) }
                     ), in: 0...1)
                     Button("Remover", role: .destructive, action: remove)
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .frame(width: 26, height: 28)
-                }
-                .menuStyle(.borderlessButton)
+            } label: {
+                Image(systemName: "ellipsis")
+                    .frame(width: 26, height: 28)
             }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .frame(width: 30)
+        }
             ProgressView(value: progressValue, total: 1)
                 .progressViewStyle(.linear)
                 .tint(active == nil ? Color.white.opacity(0.22) : (active?.state == .playing ? .green : .orange))
