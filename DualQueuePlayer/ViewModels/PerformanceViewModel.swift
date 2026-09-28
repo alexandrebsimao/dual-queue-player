@@ -170,6 +170,46 @@ final class PerformanceViewModel: ObservableObject {
         onChange?()
     }
 
+    func importItems(from urls: [URL], into sceneID: UUID? = nil) {
+        guard let projectIndex = selectedProjectIndex,
+              let sceneIndex = projects[projectIndex].scenes.firstIndex(where: { $0.id == (sceneID ?? selectedSceneID) }) else {
+            showMessage("Crie ou selecione uma cena antes de importar áudios.")
+            return
+        }
+
+        let existingURLs = Set(projects[projectIndex].scenes[sceneIndex].items.compactMap { $0.fileURL?.standardizedFileURL })
+        let supportedURLs = urls.filter { isSupportedAudio($0) }
+        for url in supportedURLs where !existingURLs.contains(url.standardizedFileURL) {
+            var item = PerformanceItem(
+                name: url.deletingPathExtension().lastPathComponent,
+                classification: .other,
+                fileURL: url,
+                duration: duration(for: url),
+                isMissing: !FileManager.default.fileExists(atPath: url.path)
+            )
+            item.refreshAvailability()
+            projects[projectIndex].scenes[sceneIndex].items.append(item)
+        }
+        if !supportedURLs.isEmpty { onChange?() }
+    }
+
+    func updateItemSettings(
+        _ itemID: UUID,
+        classification: PerformanceClassification? = nil,
+        playback: PerformancePlayback? = nil,
+        transition: PerformanceTransition? = nil,
+        volume: Double? = nil
+    ) {
+        guard let projectIndex = selectedProjectIndex,
+              let sceneIndex = selectedSceneIndex,
+              let itemIndex = projects[projectIndex].scenes[sceneIndex].items.firstIndex(where: { $0.id == itemID }) else { return }
+        if let classification { projects[projectIndex].scenes[sceneIndex].items[itemIndex].classification = classification }
+        if let playback { projects[projectIndex].scenes[sceneIndex].items[itemIndex].playback = playback }
+        if let transition { projects[projectIndex].scenes[sceneIndex].items[itemIndex].transition = transition }
+        if let volume { projects[projectIndex].scenes[sceneIndex].items[itemIndex].volume = min(1, max(0, volume)) }
+        onChange?()
+    }
+
     func updateItem(_ item: PerformanceItem) {
         guard let projectIndex = selectedProjectIndex,
               let sceneIndex = projects[projectIndex].scenes.firstIndex(where: { $0.id == selectedSceneID }),
@@ -393,6 +433,10 @@ final class PerformanceViewModel: ObservableObject {
     private func duration(for url: URL) -> TimeInterval {
         let seconds = CMTimeGetSeconds(AVURLAsset(url: url).duration)
         return seconds.isFinite && seconds > 0 ? seconds : 0
+    }
+
+    private func isSupportedAudio(_ url: URL) -> Bool {
+        ["mp3", "wav", "m4a", "aac", "aiff", "aif"].contains(url.pathExtension.lowercased())
     }
 
     private func startClockTimer() {

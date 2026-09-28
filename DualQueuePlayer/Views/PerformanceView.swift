@@ -184,6 +184,13 @@ struct PerformanceView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(viewModel.selectedScene == nil)
+                Button {
+                    importAudioFiles()
+                } label: {
+                    Label("Importar áudios", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(.bordered)
+                .disabled(viewModel.selectedScene == nil)
             }
 
             if viewModel.displayMode == .list {
@@ -318,7 +325,7 @@ struct PerformanceView: View {
         VStack(spacing: 0) {
             if let scene = viewModel.selectedScene, !scene.items.isEmpty {
                 ForEach(Array(scene.items.enumerated()), id: \.element.id) { index, item in
-                                PerformanceItemRow(index: index, item: item, active: viewModel.activeItems[item.id], trigger: {
+                    PerformanceItemRow(index: index, item: item, active: viewModel.activeItems[item.id], trigger: {
                         viewModel.trigger(item.id)
                     }, pause: {
                         viewModel.pause(item.id)
@@ -330,7 +337,9 @@ struct PerformanceView: View {
                         editingItem = item
                     }, remove: {
                         viewModel.removeItem(item.id)
-                                })
+                    }, quickConfigure: { classification, playback, transition, volume in
+                        viewModel.updateItemSettings(item.id, classification: classification, playback: playback, transition: transition, volume: volume)
+                    })
                                 .onDrag {
                                     draggedItemID = item.id
                                     return NSItemProvider(item: item.id.uuidString as NSString, typeIdentifier: UTType.utf8PlainText.identifier)
@@ -369,6 +378,8 @@ struct PerformanceView: View {
                             editingItem = item
                         }, remove: {
                             viewModel.removeItem(item.id)
+                        }, quickConfigure: { classification, playback, transition, volume in
+                            viewModel.updateItemSettings(item.id, classification: classification, playback: playback, transition: transition, volume: volume)
                         })
                     }
                 }
@@ -455,6 +466,14 @@ struct PerformanceView: View {
         guard let duration = Double(expectedDurationDraft), duration >= 0 else { return }
         viewModel.setExpectedDuration(duration)
     }
+
+    private func importAudioFiles() {
+        let panel = NSOpenPanel()
+        panel.allowedFileTypes = ["mp3", "wav", "m4a", "aac", "aiff", "aif"]
+        panel.allowsMultipleSelection = true
+        guard panel.runModal() == .OK else { return }
+        viewModel.importItems(from: panel.urls)
+    }
 }
 
 private struct PerformanceItemDropDelegate: DropDelegate {
@@ -509,6 +528,7 @@ private struct PerformanceItemRow: View {
     let stop: () -> Void
     let edit: () -> Void
     let remove: () -> Void
+    let quickConfigure: (PerformanceClassification?, PerformancePlayback?, PerformanceTransition?, Double?) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -559,6 +579,33 @@ private struct PerformanceItemRow: View {
                 }
                 Menu {
                     Button("Editar", action: edit)
+                    Menu("Classificação") {
+                        ForEach(PerformanceClassification.allCases) { classification in
+                            Button {
+                                quickConfigure(classification, nil, nil, nil)
+                            } label: {
+                                Label(classification.title, systemImage: classification.symbolName)
+                            }
+                        }
+                    }
+                    Menu("Reprodução") {
+                        ForEach(PerformancePlayback.allCases) { playback in
+                            Button(playback.title) {
+                                quickConfigure(nil, playback, nil, nil)
+                            }
+                        }
+                    }
+                    Menu("Troca de cena") {
+                        ForEach(PerformanceTransition.allCases) { transition in
+                            Button(transition.title) {
+                                quickConfigure(nil, nil, transition, nil)
+                            }
+                        }
+                    }
+                    Slider(value: Binding(
+                        get: { item.volume },
+                        set: { quickConfigure(nil, nil, nil, $0) }
+                    ), in: 0...1)
                     Button("Remover", role: .destructive, action: remove)
                 } label: {
                     Image(systemName: "ellipsis")
