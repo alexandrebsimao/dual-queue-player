@@ -330,7 +330,7 @@ struct PerformanceView: View {
             VStack(spacing: 0) {
                 if let scene = viewModel.selectedScene, !scene.items.isEmpty {
                     ForEach(Array(scene.items.enumerated()), id: \.element.id) { index, item in
-                    PerformanceItemRow(index: index, item: item, active: viewModel.activeItems[item.id], trigger: {
+                    PerformanceItemRow(index: index, item: item, active: viewModel.activeItems[item.id], hasExecuted: viewModel.executedItemIDs.contains(item.id), trigger: {
                         viewModel.trigger(item.id)
                     }, pause: {
                         viewModel.pause(item.id)
@@ -377,7 +377,7 @@ struct PerformanceView: View {
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(.blue)
                         ForEach(Array(group.items.enumerated()), id: \.element.id) { index, item in
-                            PerformanceItemRow(index: index, item: item, active: viewModel.activeItems[item.id], trigger: {
+                            PerformanceItemRow(index: index, item: item, active: viewModel.activeItems[item.id], hasExecuted: viewModel.executedItemIDs.contains(item.id), trigger: {
                                 viewModel.trigger(item.id)
                             }, pause: {
                                 viewModel.pause(item.id)
@@ -538,6 +538,7 @@ private struct PerformanceItemRow: View {
     let index: Int
     let item: PerformanceItem
     let active: ActivePerformanceItem?
+    let hasExecuted: Bool
     let trigger: () -> Void
     let pause: () -> Void
     let resume: () -> Void
@@ -552,16 +553,16 @@ private struct PerformanceItemRow: View {
             HStack(spacing: 10) {
                 Text("\(index + 1)")
                     .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(Color.dqMuted)
+                    .foregroundStyle(hasExecuted ? .purple : Color.dqMuted)
                     .frame(width: 22)
                 Button {
                     if active?.state == .playing { pause() }
                     else if active?.state == .paused { resume() }
                     else { trigger() }
                 } label: {
-                    Image(systemName: active?.state == .playing ? "pause.circle.fill" : "play.circle.fill")
-                        .font(.system(size: 24))
-                        .foregroundStyle(active == nil ? .blue : (active?.state == .playing ? .green : .orange))
+                        Image(systemName: active?.state == .playing ? "pause.circle.fill" : "play.circle.fill")
+                            .font(.system(size: 24))
+                            .foregroundStyle(active == nil ? (hasExecuted ? .purple : .blue) : (active?.state == .playing ? .green : .orange))
                 }
                 .buttonStyle(.plain)
                 VStack(alignment: .leading, spacing: 3) {
@@ -575,6 +576,10 @@ private struct PerformanceItemRow: View {
                         if let active {
                             Text("Agora \(format(active.currentTime)) / \(format(active.duration))")
                                 .foregroundStyle(active.state == .playing ? .green : .orange)
+                        }
+                        if hasExecuted && active == nil {
+                            Text("Executada")
+                                .foregroundStyle(.purple)
                         }
                         if item.isMissing { Text("Arquivo ausente").foregroundStyle(.orange) }
                         if let shortcut = item.keyboardShortcut, !shortcut.isEmpty { Text("Atalho: \(shortcut)") }
@@ -593,6 +598,10 @@ private struct PerformanceItemRow: View {
                     .buttonStyle(.bordered)
                     Button(action: stop) { Image(systemName: "stop.fill") }
                         .buttonStyle(.bordered)
+                } else if hasExecuted {
+                    Text("Executada")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.purple)
                 }
             Menu {
                     Button("Editar", action: edit)
@@ -643,13 +652,13 @@ private struct PerformanceItemRow: View {
                 get: { progressValue },
                 set: seek
             ), in: 0...1)
-                .tint(active == nil ? Color.white.opacity(0.22) : (active?.state == .playing ? .green : .orange))
+                .tint(active == nil ? (hasExecuted ? .purple : Color.white.opacity(0.22)) : (active?.state == .playing ? .green : .orange))
                 .padding(.leading, 40)
                 .disabled(active == nil || progressDuration <= 0)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 8)
-        .background(active != nil ? Color.blue.opacity(0.08) : Color.clear)
+        .background(active != nil ? Color.blue.opacity(0.08) : (hasExecuted ? Color.purple.opacity(0.08) : Color.clear))
         .contentShape(Rectangle())
     }
 

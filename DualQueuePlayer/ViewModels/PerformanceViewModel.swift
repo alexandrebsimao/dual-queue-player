@@ -8,6 +8,7 @@ final class PerformanceViewModel: ObservableObject {
     @Published var selectedProjectID: UUID?
     @Published var displayMode: PerformanceDisplayMode = .list
     @Published private(set) var activeItems: [UUID: ActivePerformanceItem] = [:]
+    @Published private(set) var executedItemIDs: Set<UUID> = []
     @Published private(set) var sceneElapsedTime: TimeInterval = 0
     @Published private(set) var sceneClockState: SceneClockState = .stopped
     @Published var message: String?
@@ -63,6 +64,7 @@ final class PerformanceViewModel: ObservableObject {
 
     func load(projects: [PerformanceProject], selectedProjectID: UUID?) {
         stopAll()
+        executedItemIDs.removeAll()
         resetSceneClock()
         self.projects = projects
         normalizeAll()
@@ -233,6 +235,7 @@ final class PerformanceViewModel: ObservableObject {
               let sceneIndex = projects[projectIndex].scenes.firstIndex(where: { $0.id == (sceneID ?? selectedSceneID) }) else { return }
         audio.stopPerformanceItem(id: id)
         activeItems[id] = nil
+        executedItemIDs.remove(id)
         projects[projectIndex].scenes[sceneIndex].items.removeAll { $0.id == id }
         onChange?()
     }
@@ -265,6 +268,7 @@ final class PerformanceViewModel: ObservableObject {
                 }
             }
             let duration = try audio.playPerformanceItem(id: itemID, url: url, volume: Float(playableItem.volume), loops: playableItem.playback == .loop)
+            executedItemIDs.insert(itemID)
             activeItems[itemID] = ActivePerformanceItem(itemID: itemID, state: .playing, currentTime: 0, duration: playableItem.duration > 0 ? playableItem.duration : duration)
             startActiveItemsTimer()
         } catch {
