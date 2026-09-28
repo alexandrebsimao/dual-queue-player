@@ -322,9 +322,10 @@ struct PerformanceView: View {
     }
 
     private var itemList: some View {
-        VStack(spacing: 0) {
-            if let scene = viewModel.selectedScene, !scene.items.isEmpty {
-                ForEach(Array(scene.items.enumerated()), id: \.element.id) { index, item in
+        ScrollView(.vertical) {
+            VStack(spacing: 0) {
+                if let scene = viewModel.selectedScene, !scene.items.isEmpty {
+                    ForEach(Array(scene.items.enumerated()), id: \.element.id) { index, item in
                     PerformanceItemRow(index: index, item: item, active: viewModel.activeItems[item.id], trigger: {
                         viewModel.trigger(item.id)
                     }, pause: {
@@ -347,45 +348,50 @@ struct PerformanceView: View {
                                 .onDrop(of: [UTType.utf8PlainText.identifier], delegate: PerformanceItemDropDelegate(targetID: item.id, draggedID: $draggedItemID) { sourceID, targetID in
                                     viewModel.moveItem(sourceID, before: targetID)
                                 })
-                    if index < scene.items.count - 1 { Divider().opacity(0.15) }
+                        if index < scene.items.count - 1 { Divider().opacity(0.15) }
+                    }
+                } else {
+                    emptyItems
                 }
-            } else {
-                emptyItems
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(10)
         .background(Color.dqPanel)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
     private var groupedCueList: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ForEach(viewModel.groupedItems, id: \.classification) { group in
-                VStack(alignment: .leading, spacing: 6) {
-                    Label(group.classification.title, systemImage: group.classification.symbolName)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.blue)
-                    ForEach(Array(group.items.enumerated()), id: \.element.id) { index, item in
-                        PerformanceItemRow(index: index, item: item, active: viewModel.activeItems[item.id], trigger: {
-                            viewModel.trigger(item.id)
-                        }, pause: {
-                            viewModel.pause(item.id)
-                        }, resume: {
-                            viewModel.resume(item.id)
-                        }, stop: {
-                            viewModel.stop(item.id)
-                        }, edit: {
-                            editingItem = item
-                        }, remove: {
-                            viewModel.removeItem(item.id)
-                        }, quickConfigure: { classification, playback, transition, volume in
-                            viewModel.updateItemSettings(item.id, classification: classification, playback: playback, transition: transition, volume: volume)
-                        })
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(viewModel.groupedItems, id: \.classification) { group in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label(group.classification.title, systemImage: group.classification.symbolName)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.blue)
+                        ForEach(Array(group.items.enumerated()), id: \.element.id) { index, item in
+                            PerformanceItemRow(index: index, item: item, active: viewModel.activeItems[item.id], trigger: {
+                                viewModel.trigger(item.id)
+                            }, pause: {
+                                viewModel.pause(item.id)
+                            }, resume: {
+                                viewModel.resume(item.id)
+                            }, stop: {
+                                viewModel.stop(item.id)
+                            }, edit: {
+                                editingItem = item
+                            }, remove: {
+                                viewModel.removeItem(item.id)
+                            }, quickConfigure: { classification, playback, transition, volume in
+                                viewModel.updateItemSettings(item.id, classification: classification, playback: playback, transition: transition, volume: volume)
+                            })
+                        }
                     }
                 }
+                if viewModel.groupedItems.isEmpty { emptyItems }
             }
-            if viewModel.groupedItems.isEmpty { emptyItems }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(12)
         .background(Color.dqPanel)
         .clipShape(RoundedRectangle(cornerRadius: 12))
