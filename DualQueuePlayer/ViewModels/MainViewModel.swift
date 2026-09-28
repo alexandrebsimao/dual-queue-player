@@ -8,6 +8,15 @@ enum PlaybackState: Equatable {
     case paused
 }
 
+enum WorkspaceMode: String, CaseIterable, Identifiable {
+    case player
+    case performance
+
+    var id: String { rawValue }
+    var title: String { self == .player ? "Player" : "Performance" }
+    var symbolName: String { self == .player ? "music.note.list" : "theatermasks.fill" }
+}
+
 @MainActor
 final class MainViewModel: ObservableObject {
     @Published var queueA: QueueViewModel
@@ -24,9 +33,11 @@ final class MainViewModel: ObservableObject {
     @Published var padPages: [SoundPadPage]
     @Published var selectedPadPageIndex = 0
     @Published var message: String?
+    @Published var workspaceMode: WorkspaceMode = .player
     @Published private(set) var currentProjectURL: URL?
 
     let audio: AudioEngineManager
+    let performance: PerformanceViewModel
     let previewPlayer = PreviewPlayer()
     let duckingController = DuckingController()
     private let store = ProjectStore.shared
@@ -42,8 +53,14 @@ final class MainViewModel: ObservableObject {
         currentProjectURL = nil
         masterVolume = project.masterVolume
         padPages = project.padPages
-        audio = AudioEngineManager()
+        let audioManager = AudioEngineManager()
+        audio = audioManager
         audio.volume = Float(project.masterVolume)
+        performance = PerformanceViewModel(
+            audio: audioManager,
+            projects: project.performanceProjects,
+            selectedProjectID: project.selectedPerformanceProjectID
+        )
         wireViewModels()
         configureAudioCallbacks()
         configureShortcuts()
@@ -136,6 +153,10 @@ final class MainViewModel: ObservableObject {
         currentTime = 0
     }
 
+    func stopPerformance() {
+        performance.stopAll()
+    }
+
     func clearQueue(_ identifier: QueueIdentifier) {
         let queue = viewModel(for: identifier)
         if identifier == activeQueue, currentQueue == identifier {
@@ -222,6 +243,7 @@ final class MainViewModel: ObservableObject {
 
     func newProject() {
         audio.stop()
+        performance.stopAll()
         playbackState = .stopped
         load(.empty, projectURL: nil)
     }
@@ -263,6 +285,7 @@ final class MainViewModel: ObservableObject {
     private func wireViewModels() {
         queueA.onChange = { [weak self] in self?.persist() }
         queueB.onChange = { [weak self] in self?.persist() }
+        performance.onChange = { [weak self] in self?.persist() }
     }
 
     private func configureAudioCallbacks() {
@@ -279,6 +302,10 @@ final class MainViewModel: ObservableObject {
     }
 
     private func handleShortcut(_ key: String) {
+        if workspaceMode == .performance {
+            handlePerformanceShortcut(key)
+            return
+        }
         switch key {
         case "space": togglePlayPause()
         case "escape": stop()
@@ -290,6 +317,20 @@ final class MainViewModel: ObservableObject {
             let index = key == "0" ? 9 : (Int(key).map { $0 - 1 } ?? -1)
             guard padPages.indices.contains(selectedPadPageIndex), padPages[selectedPadPageIndex].pads.indices.contains(index) else { return }
             triggerPad(padPages[selectedPadPageIndex].pads[index])
+        }
+    }
+
+    private func handlePerformanceShortcut(_ key: String) {
+        switch key {
+        case "space":
+            if performance.activeItems.values.contains(where: { $0.state == .playing }) { performance.pauseAll() }
+            else { performance.resumeAll() }
+        case "escape": performance.stopAll()
+        case "left": performance.selectAdjacentItem(direction: -1)
+        case "right": performance.selectAdjacentItem(direction: 1)
+        case "shift+left": performance.selectAdjacentScene(direction: -1)
+        case "shift+right": performance.selectAdjacentScene(direction: 1)
+        default: _ = performance.triggerConfiguredShortcut(key)
         }
     }
 
@@ -325,7 +366,18 @@ final class MainViewModel: ObservableObject {
     }
 
     private func makeProject() -> AppProject {
-        AppProject(queueA: queueA.queue, queueB: queueB.queue, activeQueue: activeQueue, masterVolume: masterVolume, padPages: padPages, duckVolume: duckingController.duckVolume, duckFadeDown: duckingController.fadeDownDuration, duckFadeUp: duckingController.fadeUpDuration)
+        AppProject(
+            queueA: queueA.queue,
+            queueB: queueB.queue,
+            activeQueue: activeQueue,
+            masterVolume: masterVolume,
+            padPages: padPages,
+            duckVolume: duckingController.duckVolume,
+            duckFadeDown: duckingController.fadeDownDuration,
+            duckFadeUp: duckingController.fadeUpDuration,
+            performanceProjects: performance.projects,
+            selectedPerformanceProjectID: performance.selectedProjectID
+        )
     }
 
     private func persist() {
@@ -348,6 +400,7 @@ final class MainViewModel: ObservableObject {
         duckingController.duckVolume = project.duckVolume
         duckingController.fadeDownDuration = project.duckFadeDown
         duckingController.fadeUpDuration = project.duckFadeUp
+        performance.load(projects: project.performanceProjects, selectedProjectID: project.selectedPerformanceProjectID)
         currentTrack = nil
         currentQueue = nil
         playbackState = .stopped

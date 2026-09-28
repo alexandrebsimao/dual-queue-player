@@ -9,12 +9,13 @@ final class KeyboardShortcutManager {
     func handle(_ event: NSEvent) -> Bool {
         guard isEnabled, event.type == .keyDown, !isTextInputFocused(in: event) else { return false }
         let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
+        let shiftPrefix = event.modifierFlags.contains(.shift) ? "shift+" : ""
         if event.keyCode == 53 { onKey?("escape"); return true }
-        if event.keyCode == 123 { onKey?("left"); return true }
-        if event.keyCode == 124 { onKey?("right"); return true }
+        if event.keyCode == 123 { onKey?("\(shiftPrefix)left"); return true }
+        if event.keyCode == 124 { onKey?("\(shiftPrefix)right"); return true }
         if event.keyCode == 49 { onKey?("space"); return true }
-        if ["a", "b"].contains(key) || "1234567890".contains(key) {
-            onKey?(key)
+        if !key.isEmpty {
+            onKey?("\(shiftPrefix)\(key)")
             return true
         }
         return false
