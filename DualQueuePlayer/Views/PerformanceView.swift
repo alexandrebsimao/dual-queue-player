@@ -12,6 +12,7 @@ struct PerformanceView: View {
     @State private var sceneNameDraft = ""
     @State private var expectedDurationDraft = ""
     @State private var editingItem: PerformanceItem?
+    @State private var expandedItemID: UUID?
     @State private var draggedItemID: UUID?
     @State private var draggedSceneID: UUID?
     @State private var isDeleteProjectConfirmationPresented = false
@@ -330,7 +331,9 @@ struct PerformanceView: View {
             VStack(spacing: 0) {
                 if let scene = viewModel.selectedScene, !scene.items.isEmpty {
                     ForEach(Array(scene.items.enumerated()), id: \.element.id) { index, item in
-                    PerformanceItemRow(index: index, item: item, active: viewModel.activeItems[item.id], hasExecuted: viewModel.executedItemIDs.contains(item.id), trigger: {
+                    PerformanceItemRow(index: index, item: item, active: viewModel.activeItems[item.id], hasExecuted: viewModel.executedItemIDs.contains(item.id), isExpanded: expandedItemID == item.id, toggleExpanded: {
+                        expandedItemID = expandedItemID == item.id ? nil : item.id
+                    }, trigger: {
                         viewModel.trigger(item.id)
                     }, pause: {
                         viewModel.pause(item.id)
@@ -377,7 +380,9 @@ struct PerformanceView: View {
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(.blue)
                         ForEach(Array(group.items.enumerated()), id: \.element.id) { index, item in
-                            PerformanceItemRow(index: index, item: item, active: viewModel.activeItems[item.id], hasExecuted: viewModel.executedItemIDs.contains(item.id), trigger: {
+                            PerformanceItemRow(index: index, item: item, active: viewModel.activeItems[item.id], hasExecuted: viewModel.executedItemIDs.contains(item.id), isExpanded: expandedItemID == item.id, toggleExpanded: {
+                                expandedItemID = expandedItemID == item.id ? nil : item.id
+                            }, trigger: {
                                 viewModel.trigger(item.id)
                             }, pause: {
                                 viewModel.pause(item.id)
@@ -539,6 +544,8 @@ private struct PerformanceItemRow: View {
     let item: PerformanceItem
     let active: ActivePerformanceItem?
     let hasExecuted: Bool
+    let isExpanded: Bool
+    let toggleExpanded: () -> Void
     let trigger: () -> Void
     let pause: () -> Void
     let resume: () -> Void
@@ -560,9 +567,9 @@ private struct PerformanceItemRow: View {
                     else if active?.state == .paused { resume() }
                     else { trigger() }
                 } label: {
-                        Image(systemName: active?.state == .playing ? "pause.circle.fill" : "play.circle.fill")
-                            .font(.system(size: 24))
-                            .foregroundStyle(active == nil ? (hasExecuted ? .purple : .blue) : (active?.state == .playing ? .green : .orange))
+                    Image(systemName: active?.state == .playing ? "pause.circle.fill" : "play.circle.fill")
+                        .font(.system(size: 24))
+                        .foregroundStyle(active == nil ? (hasExecuted ? .purple : .blue) : (active?.state == .playing ? .green : .orange))
                 }
                 .buttonStyle(.plain)
                 VStack(alignment: .leading, spacing: 3) {
@@ -577,16 +584,13 @@ private struct PerformanceItemRow: View {
                             Text("Agora \(format(active.currentTime)) / \(format(active.duration))")
                                 .foregroundStyle(active.state == .playing ? .green : .orange)
                         }
-                        if hasExecuted && active == nil {
-                            Text("Executada")
-                                .foregroundStyle(.purple)
-                        }
                         if item.isMissing { Text("Arquivo ausente").foregroundStyle(.orange) }
                         if let shortcut = item.keyboardShortcut, !shortcut.isEmpty { Text("Atalho: \(shortcut)") }
                     }
                     .font(.system(size: 11))
                     .foregroundStyle(item.isMissing ? .orange : Color.dqMuted)
                 }
+                menuButton
                 Spacer()
                 if let active {
                     Text(active.state == .playing ? "Tocando" : "Pausado")
@@ -603,51 +607,15 @@ private struct PerformanceItemRow: View {
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.purple)
                 }
-            Menu {
-                    Button("Editar", action: edit)
-                    Menu("Classificação") {
-                        ForEach(PerformanceClassification.allCases) { classification in
-                            Button {
-                                quickConfigure(classification, nil, nil, nil, nil)
-                            } label: {
-                                Label(classification.title, systemImage: classification.symbolName)
-                            }
-                        }
-                    }
-                    Menu("Reprodução") {
-                        ForEach(PerformancePlayback.allCases) { playback in
-                            Button(playback.title) {
-                                quickConfigure(nil, playback, nil, nil, nil)
-                            }
-                        }
-                    }
-                    Menu("Troca de cena") {
-                        ForEach(PerformanceTransition.allCases) { transition in
-                            Button(transition.title) {
-                                quickConfigure(nil, nil, transition, nil, nil)
-                            }
-                        }
-                    }
-                    Menu("Sobreposição") {
-                        ForEach(PerformanceMixBehavior.allCases) { mixBehavior in
-                            Button(mixBehavior.title) {
-                                quickConfigure(nil, nil, nil, mixBehavior, nil)
-                            }
-                        }
-                    }
-                    Slider(value: Binding(
-                        get: { item.volume },
-                        set: { quickConfigure(nil, nil, nil, nil, $0) }
-                    ), in: 0...1)
-                    Button("Remover", role: .destructive, action: remove)
-            } label: {
-                Image(systemName: "ellipsis")
-                    .frame(width: 26, height: 28)
+                Button(action: toggleExpanded) {
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.dqMuted)
+                        .frame(width: 24, height: 28)
+                }
+                .buttonStyle(.plain)
+                .help(isExpanded ? "Ocultar configuração" : "Mostrar configuração")
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .frame(width: 30)
-        }
             Slider(value: Binding(
                 get: { progressValue },
                 set: seek
@@ -655,11 +623,123 @@ private struct PerformanceItemRow: View {
                 .tint(active == nil ? (hasExecuted ? .purple : Color.white.opacity(0.22)) : (active?.state == .playing ? .green : .orange))
                 .padding(.leading, 40)
                 .disabled(active == nil || progressDuration <= 0)
+            if isExpanded {
+                expandedSettings
+            }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 8)
         .background(active != nil ? Color.blue.opacity(0.08) : (hasExecuted ? Color.purple.opacity(0.08) : Color.clear))
         .contentShape(Rectangle())
+    }
+
+    private var menuButton: some View {
+        Menu {
+            Button("Editar", action: edit)
+            Menu("Classificação") {
+                ForEach(PerformanceClassification.allCases) { classification in
+                    Button {
+                        quickConfigure(classification, nil, nil, nil, nil)
+                    } label: {
+                        Label(classification.title, systemImage: classification.symbolName)
+                    }
+                }
+            }
+            Menu("Reprodução") {
+                ForEach(PerformancePlayback.allCases) { playback in
+                    Button(playback.title) {
+                        quickConfigure(nil, playback, nil, nil, nil)
+                    }
+                }
+            }
+            Menu("Troca de cena") {
+                ForEach(PerformanceTransition.allCases) { transition in
+                    Button(transition.title) {
+                        quickConfigure(nil, nil, transition, nil, nil)
+                    }
+                }
+            }
+            Menu("Sobreposição") {
+                ForEach(PerformanceMixBehavior.allCases) { mixBehavior in
+                    Button(mixBehavior.title) {
+                        quickConfigure(nil, nil, nil, mixBehavior, nil)
+                    }
+                }
+            }
+            Slider(value: Binding(
+                get: { item.volume },
+                set: { quickConfigure(nil, nil, nil, nil, $0) }
+            ), in: 0...1)
+            Button("Remover", role: .destructive, action: remove)
+        } label: {
+            Image(systemName: "ellipsis")
+                .frame(width: 26, height: 28)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .frame(width: 30)
+    }
+
+    private var expandedSettings: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Picker("Classificação", selection: Binding(
+                    get: { item.classification },
+                    set: { quickConfigure($0, nil, nil, nil, nil) }
+                )) {
+                    ForEach(PerformanceClassification.allCases) { classification in
+                        Text(classification.title).tag(classification)
+                    }
+                }
+                .frame(width: 150)
+
+                Picker("Reprodução", selection: Binding(
+                    get: { item.playback },
+                    set: { quickConfigure(nil, $0, nil, nil, nil) }
+                )) {
+                    ForEach(PerformancePlayback.allCases) { playback in
+                        Text(playback.title).tag(playback)
+                    }
+                }
+                .frame(width: 125)
+
+                Picker("Troca", selection: Binding(
+                    get: { item.transition },
+                    set: { quickConfigure(nil, nil, $0, nil, nil) }
+                )) {
+                    ForEach(PerformanceTransition.allCases) { transition in
+                        Text(transition == .stopOnSceneChange ? "Parar na troca" : "Continuar")
+                            .tag(transition)
+                    }
+                }
+                .frame(width: 145)
+
+                Toggle("Sobrepor", isOn: Binding(
+                    get: { item.mixBehavior == .overlay },
+                    set: { quickConfigure(nil, nil, nil, $0 ? .overlay : .interruptOthers, nil) }
+                ))
+                .toggleStyle(.checkbox)
+                .frame(width: 105)
+            }
+            HStack(spacing: 8) {
+                Text("Volume")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.dqMuted)
+                Slider(value: Binding(
+                    get: { item.volume },
+                    set: { quickConfigure(nil, nil, nil, nil, $0) }
+                ), in: 0...1)
+                Text("\(Int(item.volume * 100))%")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(Color.dqMuted)
+                    .frame(width: 38, alignment: .trailing)
+            }
+        }
+        .padding(.leading, 40)
+        .padding(.trailing, 28)
+        .padding(.top, 2)
+        .padding(.bottom, 4)
+        .controlSize(.small)
     }
 
     private var progressValue: Double {
