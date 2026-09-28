@@ -34,6 +34,8 @@ final class AudioEngineManager: NSObject, ObservableObject {
     private var scheduledFile: AVAudioFile?
     private var playbackStartTime: TimeInterval = 0
     private var progressTimer: Timer?
+    private var musicFadeTask: Task<Void, Never>?
+    private var musicFadeToken = UUID()
     private var musicURL: URL?
     private var playbackToken = UUID()
 
@@ -98,6 +100,7 @@ final class AudioEngineManager: NSObject, ObservableObject {
 
     func pause() {
         guard isPlaying else { return }
+        cancelMusicFade(restoreVolume: true)
         updateProgress()
         musicPlayer.pause()
         isPlaying = false
@@ -106,6 +109,7 @@ final class AudioEngineManager: NSObject, ObservableObject {
 
     func resume() {
         guard scheduledFile != nil else { return }
+        cancelMusicFade(restoreVolume: true)
         if !engine.isRunning { try? engine.start() }
         musicPlayer.play()
         isPlaying = true
@@ -113,6 +117,7 @@ final class AudioEngineManager: NSObject, ObservableObject {
     }
 
     func stop() {
+        cancelMusicFade(restoreVolume: true)
         playbackToken = UUID()
         musicPlayer.stop()
         isPlaying = false
@@ -121,6 +126,31 @@ final class AudioEngineManager: NSObject, ObservableObject {
         scheduledFile = nil
         musicURL = nil
         stopProgressTimer()
+    }
+
+    func pauseWithFade(duration: TimeInterval, completion: (() -> Void)? = nil) {
+        guard isPlaying else {
+            completion?()
+            return
+        }
+        fadeMusicVolume(to: 0, duration: duration) { [weak self] in
+            guard let self else { return }
+            self.pause()
+            completion?()
+        }
+    }
+
+    func stopWithFade(duration: TimeInterval, completion: (() -> Void)? = nil) {
+        guard isPlaying else {
+            stop()
+            completion?()
+            return
+        }
+        fadeMusicVolume(to: 0, duration: duration) { [weak self] in
+            guard let self else { return }
+            self.stop()
+            completion?()
+        }
     }
 
     func seek(to time: TimeInterval) {
@@ -264,19 +294,37 @@ final class AudioEngineManager: NSObject, ObservableObject {
         return performanceOffsets[id] ?? 0
     }
 
-    func fadeMusicVolume(to target: Float, duration: TimeInterval) {
+    func fadeMusicVolume(to target: Float, duration: TimeInterval, completion: (() -> Void)? = nil) {
+        musicFadeTask?.cancel()
+        musicFadeToken = UUID()
+        let token = musicFadeToken
         let start = musicMixer.outputVolume
-        guard duration > 0 else { musicMixer.outputVolume = target; return }
-        Task { @MainActor [weak self] in
+        guard duration > 0 else {
+            musicMixer.outputVolume = target
+            completion?()
+            return
+        }
+        musicFadeTask = Task { @MainActor [weak self] in
             let steps = max(1, Int(duration * 30))
             for step in 1...steps {
                 try? await Task.sleep(for: .milliseconds(33))
                 guard let self else { return }
+                guard !Task.isCancelled, self.musicFadeToken == token else { return }
                 let progress = Float(step) / Float(steps)
                 self.musicMixer.outputVolume = start + ((target - start) * progress)
-                if step == steps { self.volume = target }
             }
+            guard let self, self.musicFadeToken == token else { return }
+            self.musicMixer.outputVolume = target
+            self.musicFadeTask = nil
+            completion?()
         }
+    }
+
+    private func cancelMusicFade(restoreVolume: Bool) {
+        musicFadeTask?.cancel()
+        musicFadeTask = nil
+        musicFadeToken = UUID()
+        if restoreVolume { musicMixer.outputVolume = volume }
     }
 
     private func makePadPlayer(for id: UUID) -> AVAudioPlayerNode {

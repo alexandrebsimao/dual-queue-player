@@ -14,6 +14,7 @@ final class MainViewModel: ObservableObject {
     @Published var queueA: QueueViewModel
     @Published var queueB: QueueViewModel
     @Published var performance: PerformanceViewModel
+    @Published var playlistPlaybackSettings: PlaylistPlaybackSettings
     @Published var activeQueue: QueueIdentifier
     @Published var currentTrack: Track?
     @Published var currentQueue: QueueIdentifier?
@@ -35,11 +36,14 @@ final class MainViewModel: ObservableObject {
     private let shortcutManager = KeyboardShortcutManager()
     private var localEventMonitor: Any?
     private var activeDuckPads = Set<UUID>()
+    @Published private(set) var stopAtCurrentTrackEnd = false
+    private var queueSwitchToken = UUID()
 
     init() {
         let project = ProjectStore.shared.loadLastProject() ?? .empty
         queueA = QueueViewModel(identifier: .queueA, queue: project.queueA)
         queueB = QueueViewModel(identifier: .queueB, queue: project.queueB)
+        playlistPlaybackSettings = project.playlistPlaybackSettings
         activeQueue = project.activeQueue
         currentProjectURL = nil
         masterVolume = project.masterVolume
@@ -77,12 +81,8 @@ final class MainViewModel: ObservableObject {
 
     func selectQueue(_ identifier: QueueIdentifier) {
         guard identifier != activeQueue else { return }
-        audio.stop()
-        playbackState = .stopped
-        currentTrack = nil
-        currentQueue = nil
-        activeQueue = identifier
-        persist()
+        let shouldStartSelectedTrack = playlistPlaybackSettings.queueSwitchMode == .automatic
+        switchQueue(to: identifier, startTrack: nil, shouldStart: shouldStartSelectedTrack)
     }
 
     func selectTrack(_ track: Track, in queue: QueueIdentifier) {
@@ -92,7 +92,11 @@ final class MainViewModel: ObservableObject {
 
     func togglePlayPause() {
         if playbackState == .playing {
-            audio.pause()
+            if playlistPlaybackSettings.pauseWithFade {
+                audio.pauseWithFade(duration: playlistPlaybackSettings.fadeDuration)
+            } else {
+                audio.pause()
+            }
             playbackState = .paused
             return
         }
@@ -119,12 +123,16 @@ final class MainViewModel: ObservableObject {
     }
 
     func play(_ track: Track, from queue: QueueIdentifier) {
-        if queue != activeQueue { selectQueue(queue) }
+        if queue != activeQueue {
+            switchQueue(to: queue, startTrack: track, shouldStart: true)
+            return
+        }
         guard !track.isMissing, FileManager.default.fileExists(atPath: track.fileURL.path) else {
             showMessage("O arquivo de \(track.title) não foi encontrado.")
             return
         }
         do {
+            stopAtCurrentTrackEnd = false
             viewModel(for: queue).select(track)
             try audio.play(trackURL: track.fileURL)
             currentTrack = track
@@ -139,15 +147,29 @@ final class MainViewModel: ObservableObject {
     }
 
     func stop() {
-        audio.stop()
-        playbackState = .stopped
-        currentTime = 0
+        if stopAtCurrentTrackEnd {
+            stopImmediately()
+            return
+        }
+        guard playlistPlaybackSettings.stopBehavior == .afterCurrentTrack,
+              playbackState == .playing else {
+            stopImmediately()
+            return
+        }
+        stopAtCurrentTrackEnd = true
+    }
+
+    func updatePlaylistSettings(_ update: (inout PlaylistPlaybackSettings) -> Void) {
+        var updated = playlistPlaybackSettings
+        update(&updated)
+        playlistPlaybackSettings = updated
+        persist()
     }
 
     func clearQueue(_ identifier: QueueIdentifier) {
         let queue = viewModel(for: identifier)
         if identifier == activeQueue, currentQueue == identifier {
-            stop()
+            stopImmediately()
             currentTrack = nil
             currentQueue = nil
         }
@@ -158,7 +180,7 @@ final class MainViewModel: ObservableObject {
         let vm = activeQueueViewModel
         let wasPlaying = playbackState == .playing
         if vm.queue.playbackMode == .manual {
-            stop()
+            stopImmediately()
             _ = vm.nextTrack()
             currentTrack = vm.queue.selectedTrack
             return
@@ -171,7 +193,7 @@ final class MainViewModel: ObservableObject {
     func previous() {
         let vm = activeQueueViewModel
         let wasPlaying = playbackState == .playing
-        if vm.queue.playbackMode == .manual { stop() }
+        if vm.queue.playbackMode == .manual { stopImmediately() }
         guard let track = vm.previousTrack() else { return }
         if wasPlaying && vm.queue.playbackMode != .manual { play(track, from: activeQueue) }
         else { currentTrack = track }
@@ -190,7 +212,7 @@ final class MainViewModel: ObservableObject {
         case .overlay:
             break
         case .interrupt:
-            if playbackState == .playing { stop() }
+            if playbackState == .playing { stopImmediately() }
         case .duck:
             if playbackState == .playing {
                 let volume = duckingController.begin(currentVolume: masterVolume)
@@ -316,9 +338,61 @@ final class MainViewModel: ObservableObject {
         }
     }
 
+    private func switchQueue(to identifier: QueueIdentifier, startTrack: Track?, shouldStart: Bool) {
+        let token = UUID()
+        queueSwitchToken = token
+        activeQueue = identifier
+
+        let shouldFade = playbackState == .playing &&
+            (playlistPlaybackSettings.queueSwitchMode == .automatic || playlistPlaybackSettings.stopWithFade)
+
+        let finish: () -> Void = { [weak self] in
+            guard let self, self.queueSwitchToken == token else { return }
+            self.currentTrack = nil
+            self.currentQueue = nil
+            self.playbackState = .stopped
+            self.currentTime = 0
+            if shouldStart {
+                let trackToStart = startTrack ?? self.viewModel(for: identifier).queue.selectedTrack
+                if let trackToStart {
+                    self.play(trackToStart, from: identifier)
+                } else {
+                    self.showMessage("Selecione uma música na \(identifier.title) para iniciar automaticamente.")
+                }
+            }
+            self.persist()
+        }
+
+        if shouldFade {
+            playbackState = .stopped
+            audio.stopWithFade(duration: playlistPlaybackSettings.fadeDuration, completion: finish)
+        } else {
+            audio.stop()
+            finish()
+        }
+    }
+
+    private func stopImmediately() {
+        stopAtCurrentTrackEnd = false
+        if playlistPlaybackSettings.stopWithFade && playbackState == .playing {
+            playbackState = .stopped
+            audio.stopWithFade(duration: playlistPlaybackSettings.fadeDuration)
+        } else {
+            audio.stop()
+            playbackState = .stopped
+        }
+        currentTime = 0
+    }
+
     private func handleMusicFinished() {
         guard let queue = currentQueue else { return }
         let vm = viewModel(for: queue)
+        if stopAtCurrentTrackEnd {
+            stopAtCurrentTrackEnd = false
+            playbackState = .stopped
+            currentTime = duration
+            return
+        }
         if vm.queue.playbackMode == .manual {
             playbackState = .stopped
             currentTime = duration
@@ -357,6 +431,7 @@ final class MainViewModel: ObservableObject {
             duckVolume: duckingController.duckVolume,
             duckFadeDown: duckingController.fadeDownDuration,
             duckFadeUp: duckingController.fadeUpDuration,
+            playlistPlaybackSettings: playlistPlaybackSettings,
             performanceProjects: performance.projects,
             selectedPerformanceProjectID: performance.selectedProjectID
         )
@@ -382,9 +457,12 @@ final class MainViewModel: ObservableObject {
         duckingController.duckVolume = project.duckVolume
         duckingController.fadeDownDuration = project.duckFadeDown
         duckingController.fadeUpDuration = project.duckFadeUp
+        playlistPlaybackSettings = project.playlistPlaybackSettings
         performance.load(projects: project.performanceProjects, selectedProjectID: project.selectedPerformanceProjectID)
         currentTrack = nil
         currentQueue = nil
+        stopAtCurrentTrackEnd = false
+        queueSwitchToken = UUID()
         playbackState = .stopped
         wireViewModels()
         persist()

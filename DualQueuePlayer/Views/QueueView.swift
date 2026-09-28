@@ -158,7 +158,7 @@ struct QueueView: View {
         HStack(spacing: 10) {
             DQIconButton(systemName: "backward.end.fill", title: "Anterior") { navigateOrSelect { mainViewModel.previous() } }
             DQIconButton(systemName: isPlaying ? "pause.fill" : "play.fill", title: isPlaying ? "Pausar" : "Play", tint: .white, prominent: isActive) { toggleOrSelect() }
-            DQIconButton(systemName: "stop.fill", title: "Parar") { if isActive { mainViewModel.stop() } }
+            DQIconButton(systemName: "stop.fill", title: mainViewModel.stopAtCurrentTrackEnd ? "Parar agora" : "Parar") { if isActive { mainViewModel.stop() } }
             DQIconButton(systemName: "forward.end.fill", title: "Próxima") { navigateOrSelect { mainViewModel.next() } }
         }
     }

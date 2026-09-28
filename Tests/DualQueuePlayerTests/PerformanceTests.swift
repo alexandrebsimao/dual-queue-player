@@ -55,6 +55,7 @@ final class PerformanceTests: XCTestCase {
         var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         object.removeValue(forKey: "performanceProjects")
         object.removeValue(forKey: "selectedPerformanceProjectID")
+        object.removeValue(forKey: "playlistPlaybackSettings")
         let legacyData = try JSONSerialization.data(withJSONObject: object)
 
         let project = try JSONDecoder().decode(AppProject.self, from: legacyData)
@@ -62,6 +63,26 @@ final class PerformanceTests: XCTestCase {
         XCTAssertTrue(project.performanceProjects.isEmpty)
         XCTAssertNil(project.selectedPerformanceProjectID)
         XCTAssertEqual(project.queueA.name, "Fila A")
+        XCTAssertEqual(project.playlistPlaybackSettings, .default)
+    }
+
+    func testPlaylistPlaybackSettingsRoundTripAndDurationClamp() throws {
+        let settings = PlaylistPlaybackSettings(
+            pauseWithFade: true,
+            stopWithFade: true,
+            stopBehavior: .afterCurrentTrack,
+            queueSwitchMode: .automatic,
+            fadeDuration: 20
+        )
+
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(PlaylistPlaybackSettings.self, from: data)
+
+        XCTAssertTrue(decoded.pauseWithFade)
+        XCTAssertTrue(decoded.stopWithFade)
+        XCTAssertEqual(decoded.stopBehavior, .afterCurrentTrack)
+        XCTAssertEqual(decoded.queueSwitchMode, .automatic)
+        XCTAssertEqual(decoded.fadeDuration, 10)
     }
 
     func testSceneClockSeekIsClampedToExpectedDuration() {
