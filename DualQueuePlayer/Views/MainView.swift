@@ -27,7 +27,7 @@ struct MainView: View {
                         .frame(width: 285)
                     }
                 } else {
-                    PerformanceView(viewModel: viewModel.performance)
+                    PerformanceView(viewModel: viewModel.performance, mainViewModel: viewModel, audio: viewModel.audio)
                 }
             }
             .padding(14)

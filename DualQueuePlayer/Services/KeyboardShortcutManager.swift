@@ -13,6 +13,11 @@ final class KeyboardShortcutManager {
         if event.keyCode == 123 { onKey?("left"); return true }
         if event.keyCode == 124 { onKey?("right"); return true }
         if event.keyCode == 49 { onKey?("space"); return true }
+        if key == "p" {
+            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            onKey?(modifiers.contains(.shift) ? "shift+p" : "p")
+            return true
+        }
         if ["a", "b"].contains(key) || "1234567890".contains(key) {
             onKey?(key)
             return true

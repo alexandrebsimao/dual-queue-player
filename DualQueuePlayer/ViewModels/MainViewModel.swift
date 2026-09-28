@@ -292,7 +292,14 @@ final class MainViewModel: ObservableObject {
 
     private func handleShortcut(_ key: String) {
         if workspaceMode == .performance {
-            performance.handleShortcut(key)
+            switch key {
+            case "p":
+                togglePlayPause()
+            case "shift+p":
+                stop()
+            default:
+                performance.handleShortcut(key)
+            }
             return
         }
         switch key {

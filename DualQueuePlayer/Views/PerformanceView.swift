@@ -3,6 +3,8 @@ import UniformTypeIdentifiers
 
 struct PerformanceView: View {
     @ObservedObject var viewModel: PerformanceViewModel
+    @ObservedObject var mainViewModel: MainViewModel
+    @ObservedObject var audio: AudioEngineManager
     @State private var projectToDelete: PerformanceProject?
     @State private var sceneToDelete: PerformanceScene?
     @State private var isRenamingProject = false
@@ -15,14 +17,18 @@ struct PerformanceView: View {
     var body: some View {
         HStack(spacing: 12) {
             projectSidebar
-                .frame(width: 235)
+                .frame(width: 250)
             if viewModel.selectedProject != nil {
                 mainPanel
             } else {
                 emptyPerformanceState
             }
-            inspector
-                .frame(width: 265)
+            VStack(spacing: 12) {
+                inspector
+                playlistPanel
+                    .frame(height: 178)
+            }
+                .frame(width: 330)
         }
         .frame(maxHeight: .infinity)
         .confirmationDialog(
@@ -225,8 +231,8 @@ struct PerformanceView: View {
     }
 
     private var sceneHeader: some View {
-        VStack(spacing: 12) {
-            HStack(alignment: .top) {
+        VStack(spacing: 9) {
+            HStack(alignment: .top, spacing: 12) {
                 Image(systemName: viewModel.selectedProject?.kind.symbolName ?? "theatermasks")
                     .font(.system(size: 23, weight: .semibold))
                     .frame(width: 48, height: 48)
@@ -253,22 +259,28 @@ struct PerformanceView: View {
                     }
                 }
                 Spacer()
-                Button("Editar cena", systemImage: "pencil") {
-                    sceneBeingEdited = viewModel.selectedScene
-                    isCreatingScene = false
-                    isSceneEditorPresented = true
-                }
-                .buttonStyle(DQPerformanceButtonStyle())
-                Picker("Visualização", selection: Binding(
-                    get: { viewModel.displayMode },
-                    set: { viewModel.setDisplayMode($0) }
-                )) {
-                    ForEach(PerformanceDisplayMode.allCases) { mode in
-                        Label(mode.title, systemImage: mode.symbolName).tag(mode)
+                VStack(alignment: .trailing, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Button("Editar cena", systemImage: "pencil") {
+                            sceneBeingEdited = viewModel.selectedScene
+                            isCreatingScene = false
+                            isSceneEditorPresented = true
+                        }
+                        .buttonStyle(DQPerformanceButtonStyle())
+                        Picker("Visualização", selection: Binding(
+                            get: { viewModel.displayMode },
+                            set: { viewModel.setDisplayMode($0) }
+                        )) {
+                            ForEach(PerformanceDisplayMode.allCases) { mode in
+                                Label(mode.title, systemImage: mode.symbolName).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 150)
                     }
+                    Button("Parar tudo", systemImage: "stop.fill") { viewModel.stopAll() }
+                        .buttonStyle(DQPerformanceButtonStyle(tint: .red, prominent: true))
                 }
-                .pickerStyle(.segmented)
-                .frame(width: 170)
             }
 
             if viewModel.selectedScene?.expectedDuration != nil {
@@ -291,12 +303,7 @@ struct PerformanceView: View {
                 ProgressView(value: viewModel.sceneElapsedTime, total: max(viewModel.currentSceneDuration, 1))
                     .tint(.orange)
             }
-            HStack {
-                Spacer()
-                Button("Parar tudo", systemImage: "stop.fill") { viewModel.stopAll() }
-                    .buttonStyle(DQPerformanceButtonStyle(tint: .red, prominent: true))
-            }
-            HStack(spacing: 10) {
+            HStack(spacing: 14) {
                 Toggle("Permitir sobreposição de mídias", isOn: Binding(
                     get: { viewModel.selectedProject?.mixMode == .overlay },
                     set: { viewModel.setMixMode($0 ? .overlay : .singleActive) }
@@ -307,9 +314,72 @@ struct PerformanceView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(Color.dqMuted)
                 Spacer()
+                HStack(spacing: 6) {
+                    Image(systemName: "keyboard")
+                    Text("P toca/pausa • ⇧P para")
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(Color.dqMuted)
             }
         }
         .padding(16)
+        .dqPanel()
+    }
+
+    private var playlistPanel: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 9) {
+                Image(systemName: "music.note.list")
+                    .font(.system(size: 18, weight: .semibold))
+                    .frame(width: 38, height: 38)
+                    .background(Color.dqPanelRaised)
+                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Playlist em segundo plano")
+                        .font(.system(size: 14, weight: .semibold))
+                        .lineLimit(1)
+                    Text(mainViewModel.currentTrack?.title ?? "Nenhuma faixa selecionada")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.dqMuted)
+                        .lineLimit(1)
+                }
+                Spacer()
+                if let currentQueue = mainViewModel.currentQueue {
+                    DQBadge(text: currentQueue.title, color: .blue)
+                }
+            }
+            HStack(spacing: 8) {
+                Button(
+                    mainViewModel.playbackState == .playing ? "Pausar playlist" : "Iniciar playlist",
+                    systemImage: mainViewModel.playbackState == .playing ? "pause.fill" : "play.fill"
+                ) {
+                    mainViewModel.togglePlayPause()
+                }
+                .buttonStyle(DQPerformanceButtonStyle(tint: .blue, prominent: true))
+                .frame(maxWidth: .infinity)
+                Button("Parar playlist", systemImage: "stop.fill") {
+                    mainViewModel.stop()
+                }
+                .buttonStyle(DQPerformanceButtonStyle(tint: .red))
+                .frame(maxWidth: .infinity)
+            }
+            Slider(
+                value: Binding(
+                    get: { audio.currentTime },
+                    set: { mainViewModel.seek(to: $0) }
+                ),
+                in: 0...max(audio.duration, 1)
+            )
+            .tint(.blue)
+            HStack {
+                Text(formatTime(audio.currentTime))
+                Spacer()
+                Text(formatTime(audio.duration))
+            }
+            .font(.system(size: 11, design: .monospaced))
+            .foregroundStyle(Color.dqMuted)
+        }
+        .padding(14)
         .dqPanel()
     }
 
@@ -320,8 +390,7 @@ struct PerformanceView: View {
                     .font(.system(size: 16, weight: .semibold))
                 Spacer()
                 Button("Importar mídias", systemImage: "plus") { viewModel.presentAddItemPanel() }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.blue)
+                    .buttonStyle(DQPerformanceButtonStyle(tint: .blue, prominent: true))
             }
 
             HStack(spacing: 10) {

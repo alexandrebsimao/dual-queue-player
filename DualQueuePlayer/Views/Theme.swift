@@ -78,6 +78,8 @@ struct DQPerformanceButtonStyle: ButtonStyle {
             .font(.system(size: 12, weight: .semibold))
             .imageScale(.small)
             .symbolRenderingMode(.hierarchical)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .foregroundStyle(prominent ? Color.white : Color.white.opacity(0.9))
             .frame(minHeight: 28)
             .padding(.horizontal, 10)
