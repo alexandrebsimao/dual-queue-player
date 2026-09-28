@@ -2,8 +2,30 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+private enum PerformanceScreen: String, CaseIterable, Identifiable {
+    case projects
+    case execution
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .projects: "Espetáculos"
+        case .execution: "Execução"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .projects: "square.grid.2x2"
+        case .execution: "play.rectangle"
+        }
+    }
+}
+
 struct PerformanceView: View {
     @ObservedObject var viewModel: PerformanceViewModel
+    @State private var screen: PerformanceScreen = .execution
     @State private var isProjectEditorPresented = false
     @State private var isSceneEditorPresented = false
     @State private var isEditingSceneName = false
@@ -19,15 +41,23 @@ struct PerformanceView: View {
     @State private var isDeleteSceneConfirmationPresented = false
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            projectSidebar
-                .frame(width: 220)
-            if viewModel.selectedProject != nil {
-                workspace
+        VStack(spacing: 12) {
+            performanceNavigation
+            if screen == .projects {
+                projectBrowser
             } else {
-                emptyWorkspace
+                HStack(alignment: .top, spacing: 12) {
+                    projectSidebar
+                        .frame(width: 220)
+                    if viewModel.selectedProject != nil {
+                        workspace
+                    } else {
+                        emptyWorkspace
+                    }
+                }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .sheet(isPresented: $isProjectEditorPresented) {
             NameEditorView(title: "Novo espetáculo", placeholder: "Nome do espetáculo", name: $projectNameDraft) {
                 viewModel.createProject(named: projectNameDraft)
@@ -84,6 +114,141 @@ struct PerformanceView: View {
         } message: {
             Text("As cues desta cena serão removidas.")
         }
+    }
+
+    private var performanceNavigation: some View {
+        HStack(spacing: 10) {
+            Label("Performance", systemImage: "theatermasks.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(0.82))
+            Picker("Área", selection: $screen) {
+                ForEach(PerformanceScreen.allCases) { item in
+                    Label(item.title, systemImage: item.symbolName).tag(item)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 220)
+            Spacer()
+            if let project = viewModel.selectedProject, screen == .execution {
+                Text(project.name)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.dqMuted)
+            }
+            Button {
+                projectNameDraft = ""
+                isProjectEditorPresented = true
+            } label: {
+                Label("Novo espetáculo", systemImage: "plus")
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 32)
+    }
+
+    private var projectBrowser: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Escolha um espetáculo")
+                        .font(.system(size: 24, weight: .bold))
+                    Text("Projetos com cenas, grupos e cues para operação ao vivo.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Color.dqMuted)
+                }
+                Spacer()
+                Button {
+                    projectNameDraft = ""
+                    isProjectEditorPresented = true
+                } label: {
+                    Label("Novo espetáculo", systemImage: "plus")
+                }
+                .buttonStyle(.borderedProminent)
+            }
+
+            if viewModel.projects.isEmpty {
+                emptyProjects
+            } else {
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
+                        ForEach(viewModel.projects) { project in
+                            projectCard(project)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .scrollIndicators(.visible)
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .dqPanel()
+    }
+
+    private func projectCard(_ project: PerformanceProject) -> some View {
+        Button {
+            viewModel.selectProject(project.id)
+            screen = .execution
+        } label: {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top) {
+                    Image(systemName: project.kind == .dance ? "figure.dance" : "theatermasks.fill")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(project.id == viewModel.selectedProjectID ? .blue : .purple)
+                        .frame(width: 38, height: 38)
+                        .background((project.id == viewModel.selectedProjectID ? Color.blue : Color.purple).opacity(0.16))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    Spacer()
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.dqMuted)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(project.name)
+                        .font(.system(size: 16, weight: .semibold))
+                        .lineLimit(1)
+                    Text("\(project.kind.title) · \(project.scenes.count) cenas · \(project.scenes.reduce(0) { $0 + $1.items.count }) cues")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.dqMuted)
+                }
+                Divider().opacity(0.2)
+                HStack {
+                    Text(project.selectedSceneID.flatMap { id in project.scenes.first(where: { $0.id == id })?.name } ?? "Nenhuma cena selecionada")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.dqMuted)
+                        .lineLimit(1)
+                    Spacer()
+                    Text("Abrir")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.blue)
+                }
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(project.id == viewModel.selectedProjectID ? Color.blue.opacity(0.10) : Color.dqRow)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.white.opacity(0.06)))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var emptyProjects: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "theatermasks")
+                .font(.system(size: 40))
+                .foregroundStyle(Color.dqMuted)
+            Text("Nenhum espetáculo criado")
+                .font(.system(size: 16, weight: .semibold))
+            Text("Crie um projeto para organizar cenas e cues de áudio.")
+                .font(.system(size: 12))
+                .foregroundStyle(Color.dqMuted)
+            Button("Novo espetáculo") {
+                projectNameDraft = ""
+                isProjectEditorPresented = true
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var projectSidebar: some View {
@@ -214,6 +379,20 @@ struct PerformanceView: View {
                 Label(viewModel.selectedProject?.name ?? "Performance", systemImage: "theatermasks.fill")
                     .font(.system(size: 20, weight: .bold))
                 Spacer()
+                Button {
+                    viewModel.selectAdjacentScene(direction: -1)
+                } label: {
+                    Label("Anterior", systemImage: "chevron.left")
+                }
+                .buttonStyle(.bordered)
+                .disabled(!hasAdjacentScene(direction: -1))
+                Button {
+                    viewModel.selectAdjacentScene(direction: 1)
+                } label: {
+                    Label("Próxima", systemImage: "chevron.right")
+                }
+                .buttonStyle(.bordered)
+                .disabled(!hasAdjacentScene(direction: 1))
                 Button {
                     sceneNameDraft = ""
                     isSceneEditorPresented = true
@@ -373,35 +552,51 @@ struct PerformanceView: View {
 
     private var groupedCueList: some View {
         ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 12) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 235), spacing: 12, alignment: .top)], alignment: .leading, spacing: 12) {
                 ForEach(viewModel.groupedItems, id: \.classification) { group in
-                    VStack(alignment: .leading, spacing: 6) {
-                        Label(group.classification.title, systemImage: group.classification.symbolName)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.blue)
-                        ForEach(Array(group.items.enumerated()), id: \.element.id) { index, item in
-                            PerformanceItemRow(index: index, item: item, active: viewModel.activeItems[item.id], hasExecuted: viewModel.executedItemIDs.contains(item.id), isExpanded: expandedItemID == item.id, toggleExpanded: {
-                                expandedItemID = expandedItemID == item.id ? nil : item.id
-                            }, trigger: {
-                                viewModel.trigger(item.id)
-                            }, pause: {
-                                viewModel.pause(item.id)
-                            }, resume: {
-                                viewModel.resume(item.id)
-                            }, stop: {
-                                viewModel.stop(item.id)
-                            }, edit: {
-                                editingItem = item
-                        }, remove: {
-                            viewModel.removeItem(item.id)
-                        }, seek: { value in
-                            let duration = viewModel.activeItems[item.id]?.duration ?? item.duration
-                            viewModel.seek(item.id, to: value * duration)
-                        }, quickConfigure: { classification, playback, transition, mixBehavior, volume in
-                            viewModel.updateItemSettings(item.id, classification: classification, playback: playback, transition: transition, mixBehavior: mixBehavior, volume: volume)
-                            })
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Label(group.classification.title, systemImage: group.classification.symbolName)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.blue)
+                            Spacer()
+                            Text("\(group.items.count) cues")
+                                .font(.system(size: 11))
+                                .foregroundStyle(Color.dqMuted)
                         }
+                        .padding(.horizontal, 4)
+                        .padding(.top, 4)
+                        VStack(spacing: 0) {
+                            ForEach(Array(group.items.enumerated()), id: \.element.id) { index, item in
+                                PerformanceItemRow(index: index, item: item, active: viewModel.activeItems[item.id], hasExecuted: viewModel.executedItemIDs.contains(item.id), isExpanded: expandedItemID == item.id, toggleExpanded: {
+                                    expandedItemID = expandedItemID == item.id ? nil : item.id
+                                }, trigger: {
+                                    viewModel.trigger(item.id)
+                                }, pause: {
+                                    viewModel.pause(item.id)
+                                }, resume: {
+                                    viewModel.resume(item.id)
+                                }, stop: {
+                                    viewModel.stop(item.id)
+                                }, edit: {
+                                    editingItem = item
+                                }, remove: {
+                                    viewModel.removeItem(item.id)
+                                }, seek: { value in
+                                    let duration = viewModel.activeItems[item.id]?.duration ?? item.duration
+                                    viewModel.seek(item.id, to: value * duration)
+                                }, quickConfigure: { classification, playback, transition, mixBehavior, volume in
+                                    viewModel.updateItemSettings(item.id, classification: classification, playback: playback, transition: transition, mixBehavior: mixBehavior, volume: volume)
+                                })
+                                if index < group.items.count - 1 { Divider().opacity(0.12) }
+                            }
+                        }
+                        .background(Color.dqPanel)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
+                    .padding(10)
+                    .background(Color.dqRow.opacity(0.7))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 if viewModel.groupedItems.isEmpty { emptyItems }
             }
@@ -420,17 +615,43 @@ struct PerformanceView: View {
                 Spacer()
                 Text("\(viewModel.activeItems.count)")
                     .foregroundStyle(Color.dqMuted)
+                if !viewModel.activeItems.isEmpty {
+                    Button("Pausar tudo") { viewModel.pauseAll() }
+                        .buttonStyle(.bordered)
+                    Button("Retomar") { viewModel.resumeAll() }
+                        .buttonStyle(.bordered)
+                    Button("Parar tudo", role: .destructive) { viewModel.stopAll() }
+                        .buttonStyle(.bordered)
+                }
             }
             if viewModel.activeItems.isEmpty {
                 Text("Nenhuma cue em execução")
                     .font(.system(size: 12))
                     .foregroundStyle(Color.dqMuted)
             } else {
-                HStack(spacing: 8) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
                     ForEach(Array(viewModel.activeItems.values)) { active in
                         if let item = viewModel.itemAnywhere(withID: active.itemID) {
-                            DQBadge(text: item.name, color: active.state == .playing ? .green : .orange)
+                            HStack(spacing: 7) {
+                                Circle()
+                                    .fill(active.state == .playing ? Color.green : Color.orange)
+                                    .frame(width: 7, height: 7)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(item.name)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .lineLimit(1)
+                                    Text("\(active.state == .playing ? "Tocando" : "Pausado") · \(format(active.currentTime)) / \(format(active.duration))")
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundStyle(Color.dqMuted)
+                                }
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background(Color.dqRow)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
+                    }
                     }
                 }
             }
@@ -469,6 +690,13 @@ struct PerformanceView: View {
                 .buttonStyle(.bordered)
         }
         .frame(maxWidth: .infinity, minHeight: 150)
+    }
+
+    private func hasAdjacentScene(direction: Int) -> Bool {
+        guard let project = viewModel.selectedProject,
+              let selectedID = viewModel.selectedSceneID,
+              let index = project.scenes.firstIndex(where: { $0.id == selectedID }) else { return false }
+        return project.scenes.indices.contains(index + direction)
     }
 
     private func format(_ time: TimeInterval) -> String {
