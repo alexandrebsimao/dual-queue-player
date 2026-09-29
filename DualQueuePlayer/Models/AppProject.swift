@@ -10,11 +10,12 @@ struct AppProject: Codable {
     var duckFadeDown: Double
     var duckFadeUp: Double
     var playlistPlaybackSettings: PlaylistPlaybackSettings
+    var audioOutputSettings: AudioOutputSettings
     var performanceProjects: [PerformanceProject]
     var selectedPerformanceProjectID: UUID?
 
     private enum CodingKeys: String, CodingKey {
-        case queueA, queueB, activeQueue, masterVolume, padPages, duckVolume, duckFadeDown, duckFadeUp, playlistPlaybackSettings
+        case queueA, queueB, activeQueue, masterVolume, padPages, duckVolume, duckFadeDown, duckFadeUp, playlistPlaybackSettings, audioOutputSettings
         case performanceProjects, selectedPerformanceProjectID
     }
 
@@ -28,6 +29,7 @@ struct AppProject: Codable {
         duckFadeDown: Double,
         duckFadeUp: Double,
         playlistPlaybackSettings: PlaylistPlaybackSettings = .default,
+        audioOutputSettings: AudioOutputSettings = .default,
         performanceProjects: [PerformanceProject] = [],
         selectedPerformanceProjectID: UUID? = nil
     ) {
@@ -40,6 +42,7 @@ struct AppProject: Codable {
         self.duckFadeDown = duckFadeDown
         self.duckFadeUp = duckFadeUp
         self.playlistPlaybackSettings = playlistPlaybackSettings
+        self.audioOutputSettings = audioOutputSettings
         self.performanceProjects = performanceProjects
         self.selectedPerformanceProjectID = selectedPerformanceProjectID
     }
@@ -55,6 +58,7 @@ struct AppProject: Codable {
         duckFadeDown = try values.decodeIfPresent(Double.self, forKey: .duckFadeDown) ?? 0.3
         duckFadeUp = try values.decodeIfPresent(Double.self, forKey: .duckFadeUp) ?? 0.5
         playlistPlaybackSettings = try values.decodeIfPresent(PlaylistPlaybackSettings.self, forKey: .playlistPlaybackSettings) ?? .default
+        audioOutputSettings = try values.decodeIfPresent(AudioOutputSettings.self, forKey: .audioOutputSettings) ?? .default
         performanceProjects = try values.decodeIfPresent([PerformanceProject].self, forKey: .performanceProjects) ?? []
         selectedPerformanceProjectID = try values.decodeIfPresent(UUID.self, forKey: .selectedPerformanceProjectID)
         if let selectedPerformanceProjectID,
@@ -74,6 +78,7 @@ struct AppProject: Codable {
             duckFadeDown: 0.3,
             duckFadeUp: 0.5,
             playlistPlaybackSettings: .default,
+            audioOutputSettings: .default,
             performanceProjects: [],
             selectedPerformanceProjectID: nil
         )

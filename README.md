@@ -105,6 +105,8 @@ A suíte atual prioriza regras que não dependem de uma saída física de áudio
 
 ## Atalhos padrão
 
+O manual completo de teclas reservadas está em [MANUAL_TECLAS_RESERVADAS.md](MANUAL_TECLAS_RESERVADAS.md).
+
 | Tecla | Ação |
 | --- | --- |
 | `Space` | Play/Pause |

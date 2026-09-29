@@ -23,6 +23,8 @@ struct SettingsView: View {
                     audioSettings
                 case .playlist:
                     playlistSettings
+                case .outputs:
+                    outputSettings
                 }
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -35,20 +37,8 @@ struct SettingsView: View {
 
     private var audioSettings: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("Saídas de Áudio", systemImage: "speaker.wave.2.fill")
+            Label("Mixagem e Ducking", systemImage: "slider.horizontal.3")
                 .font(.system(size: 14, weight: .semibold))
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Saída principal (Música + Pads)")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Color.dqMuted)
-                Text("Dispositivo padrão do macOS")
-                    .font(.system(size: 12))
-                    .padding(9)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.dqPanelRaised)
-                    .clipShape(RoundedRectangle(cornerRadius: 7))
-            }
-            Divider().opacity(0.2)
             Text("Ajustes de Ducking")
                 .font(.system(size: 14, weight: .semibold))
             HStack {
@@ -79,6 +69,82 @@ struct SettingsView: View {
             .font(.system(size: 12))
             .foregroundStyle(Color.dqMuted)
         }
+    }
+
+    private var outputSettings: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Rotas de saída", systemImage: "point.3.connected.trianglepath.dotted")
+                    .font(.system(size: 14, weight: .semibold))
+                Text("Defina as saídas principais e escolha uma única saída de monitor. Depois marque quais grupos devem ser enviados ao monitor.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.dqMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                VStack(alignment: .leading, spacing: 7) {
+                    Label("Monitor", systemImage: "headphones")
+                        .font(.system(size: 12, weight: .semibold))
+                    Picker("Saída do monitor", selection: Binding(
+                        get: { viewModel.audioOutputSettings.monitorOutputUID ?? "" },
+                        set: { value in viewModel.updateAudioOutputSettings { $0.monitorOutputUID = value.isEmpty ? nil : value } }
+                    )) {
+                        Text("Sistema (padrão)").tag("")
+                        ForEach(viewModel.outputDevices) { device in
+                            Text(device.displayName).tag(device.id)
+                        }
+                    }
+                    .font(.system(size: 11))
+                    Text("A saída acima é compartilhada por todos os grupos marcados abaixo.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.dqMuted)
+                }
+                .padding(10)
+                .background(Color.dqPanelRaised.opacity(0.75))
+                .clipShape(RoundedRectangle(cornerRadius: 9))
+
+                AudioOutputRouteSection(
+                    title: "Playlist",
+                    symbolName: "music.note.list",
+                    outputUID: Binding(
+                        get: { viewModel.audioOutputSettings.playlistOutputUID },
+                        set: { value in viewModel.updateAudioOutputSettings { $0.playlistOutputUID = value } }
+                    ),
+                    monitorEnabled: Binding(
+                        get: { viewModel.audioOutputSettings.playlistMonitorEnabled },
+                        set: { value in viewModel.updateAudioOutputSettings { $0.playlistMonitorEnabled = value } }
+                    ),
+                    devices: viewModel.outputDevices
+                )
+                AudioOutputRouteSection(
+                    title: "Pad",
+                    symbolName: "square.grid.3x3.fill",
+                    outputUID: Binding(
+                        get: { viewModel.audioOutputSettings.padOutputUID },
+                        set: { value in viewModel.updateAudioOutputSettings { $0.padOutputUID = value } }
+                    ),
+                    monitorEnabled: Binding(
+                        get: { viewModel.audioOutputSettings.padMonitorEnabled },
+                        set: { value in viewModel.updateAudioOutputSettings { $0.padMonitorEnabled = value } }
+                    ),
+                    devices: viewModel.outputDevices
+                )
+                AudioOutputRouteSection(
+                    title: "Performance",
+                    symbolName: "theatermasks.fill",
+                    outputUID: Binding(
+                        get: { viewModel.audioOutputSettings.performanceOutputUID },
+                        set: { value in viewModel.updateAudioOutputSettings { $0.performanceOutputUID = value } }
+                    ),
+                    monitorEnabled: Binding(
+                        get: { viewModel.audioOutputSettings.performanceMonitorEnabled },
+                        set: { value in viewModel.updateAudioOutputSettings { $0.performanceMonitorEnabled = value } }
+                    ),
+                    devices: viewModel.outputDevices
+                )
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .onAppear { viewModel.refreshOutputDevices() }
     }
 
     private var playlistSettings: some View {
@@ -138,6 +204,7 @@ struct SettingsView: View {
 private enum SettingsTab: String, CaseIterable, Identifiable {
     case audio
     case playlist
+    case outputs
 
     var id: String { rawValue }
 
@@ -145,6 +212,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         switch self {
         case .audio: "Áudio"
         case .playlist: "Playlist"
+        case .outputs: "Saídas"
         }
     }
 
@@ -152,6 +220,44 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         switch self {
         case .audio: "speaker.wave.2.fill"
         case .playlist: "music.note.list"
+        case .outputs: "point.3.connected.trianglepath.dotted"
         }
     }
+}
+
+private struct AudioOutputRouteSection: View {
+    let title: String
+    let symbolName: String
+    @Binding var outputUID: String?
+    @Binding var monitorEnabled: Bool
+    let devices: [AudioOutputDevice]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(title, systemImage: symbolName)
+                .font(.system(size: 12, weight: .semibold))
+
+            Picker("Saída principal", selection: outputSelection) {
+                Text("Sistema (padrão)").tag("")
+                ForEach(devices) { device in
+                    Text(device.displayName).tag(device.id)
+                }
+            }
+            .font(.system(size: 11))
+
+            Toggle("Enviar ao monitor", isOn: $monitorEnabled)
+                .font(.system(size: 11))
+        }
+        .padding(10)
+        .background(Color.dqPanelRaised.opacity(0.75))
+        .clipShape(RoundedRectangle(cornerRadius: 9))
+    }
+
+    private var outputSelection: Binding<String> {
+        Binding(
+            get: { outputUID ?? "" },
+            set: { outputUID = $0.isEmpty ? nil : $0 }
+        )
+    }
+
 }

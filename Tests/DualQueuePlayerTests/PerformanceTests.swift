@@ -56,6 +56,7 @@ final class PerformanceTests: XCTestCase {
         object.removeValue(forKey: "performanceProjects")
         object.removeValue(forKey: "selectedPerformanceProjectID")
         object.removeValue(forKey: "playlistPlaybackSettings")
+        object.removeValue(forKey: "audioOutputSettings")
         let legacyData = try JSONSerialization.data(withJSONObject: object)
 
         let project = try JSONDecoder().decode(AppProject.self, from: legacyData)
@@ -64,6 +65,22 @@ final class PerformanceTests: XCTestCase {
         XCTAssertNil(project.selectedPerformanceProjectID)
         XCTAssertEqual(project.queueA.name, "Fila A")
         XCTAssertEqual(project.playlistPlaybackSettings, .default)
+        XCTAssertEqual(project.audioOutputSettings, .default)
+    }
+
+    func testAudioOutputSettingsRoundTrip() throws {
+        var settings = AudioOutputSettings.default
+        settings.playlistOutputUID = "playlist-device"
+        settings.monitorOutputUID = "monitor-device"
+        settings.playlistMonitorEnabled = true
+        settings.padOutputUID = "pad-device"
+        settings.padMonitorEnabled = true
+        settings.performanceOutputUID = "performance-device"
+
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AudioOutputSettings.self, from: data)
+
+        XCTAssertEqual(decoded, settings)
     }
 
     func testPlaylistPlaybackSettingsRoundTripAndDurationClamp() throws {

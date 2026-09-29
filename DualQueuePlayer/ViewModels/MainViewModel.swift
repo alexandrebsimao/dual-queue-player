@@ -15,6 +15,8 @@ final class MainViewModel: ObservableObject {
     @Published var queueB: QueueViewModel
     @Published var performance: PerformanceViewModel
     @Published var playlistPlaybackSettings: PlaylistPlaybackSettings
+    @Published var audioOutputSettings: AudioOutputSettings
+    @Published private(set) var outputDevices: [AudioOutputDevice] = []
     @Published var activeQueue: QueueIdentifier
     @Published var currentTrack: Track?
     @Published var currentQueue: QueueIdentifier?
@@ -44,12 +46,15 @@ final class MainViewModel: ObservableObject {
         queueA = QueueViewModel(identifier: .queueA, queue: project.queueA)
         queueB = QueueViewModel(identifier: .queueB, queue: project.queueB)
         playlistPlaybackSettings = project.playlistPlaybackSettings
+        audioOutputSettings = project.audioOutputSettings
         activeQueue = project.activeQueue
         currentProjectURL = nil
         masterVolume = project.masterVolume
         padPages = project.padPages
         audio = AudioEngineManager()
         audio.volume = Float(project.masterVolume)
+        outputDevices = AudioOutputDeviceCatalog.availableDevices()
+        audio.applyOutputSettings(project.audioOutputSettings)
         performance = PerformanceViewModel(
             projects: project.performanceProjects,
             selectedProjectID: project.selectedPerformanceProjectID,
@@ -205,8 +210,20 @@ final class MainViewModel: ObservableObject {
     }
 
     func triggerPad(_ pad: SoundPad) {
-        do { try audio.playPad(pad) }
-        catch { showMessage("Configure um arquivo de áudio para este pad."); return }
+        guard let fileURL = pad.fileURL else {
+            showMessage("Configure um arquivo de áudio para o pad \(pad.name).")
+            return
+        }
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            showMessage("O arquivo do pad \(pad.name) não foi encontrado.")
+            return
+        }
+        do {
+            try audio.playPad(pad)
+        } catch {
+            showMessage("Não foi possível reproduzir o pad \(pad.name): \(error.localizedDescription)")
+            return
+        }
 
         switch pad.mode {
         case .overlay:
@@ -232,6 +249,18 @@ final class MainViewModel: ObservableObject {
 
     func setWorkspaceMode(_ mode: WorkspaceMode) {
         workspaceMode = mode
+    }
+
+    func refreshOutputDevices() {
+        outputDevices = AudioOutputDeviceCatalog.availableDevices()
+    }
+
+    func updateAudioOutputSettings(_ update: (inout AudioOutputSettings) -> Void) {
+        var updated = audioOutputSettings
+        update(&updated)
+        audioOutputSettings = updated
+        audio.applyOutputSettings(updated)
+        autosaveProject()
     }
 
     func saveProject() {
@@ -284,7 +313,11 @@ final class MainViewModel: ObservableObject {
 
     func updatePad(_ pad: SoundPad) {
         guard padPages.indices.contains(selectedPadPageIndex), let index = padPages[selectedPadPageIndex].pads.firstIndex(where: { $0.id == pad.id }) else { return }
-        padPages[selectedPadPageIndex].pads[index] = pad
+        var updatedPad = pad
+        if KeyboardShortcutFormatter.isReserved(updatedPad.keyboardShortcut) {
+            updatedPad.keyboardShortcut = nil
+        }
+        padPages[selectedPadPageIndex].pads[index] = updatedPad
         persist()
     }
 
@@ -331,7 +364,9 @@ final class MainViewModel: ObservableObject {
         case "b": selectQueue(.queueB)
         case "left": previous()
         case "right": next()
+        case "p", "shift+p": return
         default:
+            guard !KeyboardShortcutFormatter.isReserved(key) else { return }
             if triggerPad(for: key) { return }
             let index = key == "0" ? 9 : (Int(key).map { $0 - 1 } ?? -1)
             guard padPages.indices.contains(selectedPadPageIndex), padPages[selectedPadPageIndex].pads.indices.contains(index) else { return }
@@ -340,8 +375,9 @@ final class MainViewModel: ObservableObject {
     }
 
     private func triggerPad(for shortcut: String) -> Bool {
-        guard padPages.indices.contains(selectedPadPageIndex) else { return false }
-        let normalizedShortcut = shortcut.lowercased()
+        guard !KeyboardShortcutFormatter.isReserved(shortcut),
+              padPages.indices.contains(selectedPadPageIndex) else { return false }
+        let normalizedShortcut = shortcut.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard let pad = padPages[selectedPadPageIndex].pads.first(where: {
             $0.keyboardShortcut?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedShortcut
         }) else { return false }
@@ -443,6 +479,7 @@ final class MainViewModel: ObservableObject {
             duckFadeDown: duckingController.fadeDownDuration,
             duckFadeUp: duckingController.fadeUpDuration,
             playlistPlaybackSettings: playlistPlaybackSettings,
+            audioOutputSettings: audioOutputSettings,
             performanceProjects: performance.projects,
             selectedPerformanceProjectID: performance.selectedProjectID
         )
@@ -469,6 +506,9 @@ final class MainViewModel: ObservableObject {
         duckingController.fadeDownDuration = project.duckFadeDown
         duckingController.fadeUpDuration = project.duckFadeUp
         playlistPlaybackSettings = project.playlistPlaybackSettings
+        audioOutputSettings = project.audioOutputSettings
+        refreshOutputDevices()
+        audio.applyOutputSettings(project.audioOutputSettings)
         performance.load(projects: project.performanceProjects, selectedProjectID: project.selectedPerformanceProjectID)
         currentTrack = nil
         currentQueue = nil

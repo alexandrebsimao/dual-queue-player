@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MainView: View {
     @ObservedObject var viewModel: MainViewModel
+    @State private var isShortcutGuidePresented = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -17,7 +18,7 @@ struct MainView: View {
                             }
                             HStack(alignment: .top, spacing: 12) {
                                 SoundPadView(viewModel: viewModel)
-                                SettingsView(viewModel: viewModel).frame(width: 270)
+                                SettingsView(viewModel: viewModel).frame(width: 320)
                             }
                         }
                         VStack(spacing: 12) {
@@ -43,6 +44,11 @@ struct MainView: View {
             }
         }
         .toolbar { toolbarContent }
+        .sheet(isPresented: $isShortcutGuidePresented) {
+            KeyboardShortcutsGuideView()
+                .onAppear { viewModel.setKeyboardShortcutsEnabled(false) }
+                .onDisappear { viewModel.setKeyboardShortcutsEnabled(true) }
+        }
     }
 
     private var topBar: some View {
@@ -57,6 +63,9 @@ struct MainView: View {
             workspaceModePicker
             Spacer()
             HStack(spacing: 8) {
+                Button("Ajuda", systemImage: "questionmark.circle") {
+                    isShortcutGuidePresented = true
+                }
                 Button("Projeto", systemImage: "folder") { viewModel.openProject() }
                 Button("Salvar", systemImage: "square.and.arrow.down") { viewModel.saveProject() }
                 Button("Novo", systemImage: "plus") { viewModel.newProject() }

@@ -364,6 +364,7 @@ final class PerformanceViewModel: ObservableObject {
         case "left": moveSelection(offset: -1)
         case "right": moveSelection(offset: 1)
         default:
+            guard !KeyboardShortcutFormatter.isReserved(key) else { return }
             if let item = currentItems.first(where: { $0.keyboardShortcut?.lowercased() == key.lowercased() }) { trigger(item.id) }
         }
     }

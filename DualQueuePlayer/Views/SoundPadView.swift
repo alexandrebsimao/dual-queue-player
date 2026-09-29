@@ -10,6 +10,7 @@ struct SoundPadView: View {
     @State private var isDeleteConfirmationPresented = false
     @State private var padPendingDeletion: SoundPad?
     @State private var isPadDeleteConfirmationPresented = false
+    @State private var isShortcutGuidePresented = false
 
     private var page: SoundPadPage {
         guard viewModel.padPages.indices.contains(viewModel.selectedPadPageIndex) else { return SoundPadPage(name: "Vinhetas") }
@@ -24,6 +25,13 @@ struct SoundPadView: View {
                     .font(.system(size: 20))
                 Text("Sound Pad").font(.system(size: 20, weight: .bold))
                 Spacer()
+                Button {
+                    isShortcutGuidePresented = true
+                } label: {
+                    Label("Atalhos", systemImage: "keyboard")
+                }
+                .buttonStyle(.bordered)
+                .help("Ver guia de atalhos")
                 Picker("Página", selection: $viewModel.selectedPadPageIndex) {
                     ForEach(Array(viewModel.padPages.enumerated()), id: \.element.id) { index, page in
                         Text(page.name).tag(index)
@@ -116,6 +124,11 @@ struct SoundPadView: View {
             .onAppear { viewModel.setKeyboardShortcutsEnabled(false) }
             .onDisappear { viewModel.setKeyboardShortcutsEnabled(true) }
         }
+        .sheet(isPresented: $isShortcutGuidePresented) {
+            KeyboardShortcutsGuideView()
+                .onAppear { viewModel.setKeyboardShortcutsEnabled(false) }
+                .onDisappear { viewModel.setKeyboardShortcutsEnabled(true) }
+        }
     }
 
     private func addPad() {
@@ -174,30 +187,32 @@ private struct SoundPadCell: View {
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             Button(action: play) {
-            HStack(alignment: .top, spacing: 9) {
-                Text(String(pad.name.split(separator: " ").last ?? "1"))
-                    .font(.system(size: 12, weight: .bold))
-                    .frame(width: 25, height: 25)
-                    .background(Color.purple.opacity(0.8))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                VStack(alignment: .leading, spacing: 5) {
-                    Image(systemName: pad.iconName).font(.system(size: 17)).foregroundStyle(.purple)
-                    Text(pad.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                    HStack(spacing: 4) {
-                        Text(pad.mode.title)
-                        if let shortcut = pad.keyboardShortcut {
-                            Text("• \(KeyboardShortcutFormatter.displayName(for: shortcut))")
+                HStack(alignment: .top, spacing: 9) {
+                    Text(String(pad.name.split(separator: " ").last ?? "1"))
+                        .font(.system(size: 12, weight: .bold))
+                        .frame(width: 25, height: 25)
+                        .background(Color.purple.opacity(0.8))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                    VStack(alignment: .leading, spacing: 5) {
+                        Image(systemName: pad.iconName).font(.system(size: 17)).foregroundStyle(.purple)
+                        Text(pad.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                        HStack(spacing: 4) {
+                            Text(pad.mode.title)
+                            if let shortcut = pad.keyboardShortcut {
+                                Text("• \(KeyboardShortcutFormatter.displayName(for: shortcut))")
+                            }
                         }
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.dqMuted)
+                        .lineLimit(1)
                     }
-                    .font(.system(size: 10))
-                    .foregroundStyle(Color.dqMuted)
-                    .lineLimit(1)
+                    Spacer(minLength: 0)
                 }
-                Spacer()
-            }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .frame(maxWidth: .infinity, minHeight: 78, alignment: .topLeading)
+            .contentShape(Rectangle())
 
             Button(action: edit) {
                 Image(systemName: "ellipsis")
@@ -218,6 +233,7 @@ private struct SoundPadCell: View {
 struct SoundPadEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var pad: SoundPad
+    @State private var shortcutMessage: String?
     let onSave: (SoundPad) -> Void
     let onDelete: () -> Void
 
@@ -251,8 +267,13 @@ struct SoundPadEditorView: View {
                     .font(.system(size: 12))
                 ShortcutCaptureField(shortcut: Binding(
                     get: { pad.keyboardShortcut },
-                    set: { pad.keyboardShortcut = $0 }
-                ))
+                    set: {
+                        pad.keyboardShortcut = $0
+                        shortcutMessage = nil
+                    }
+                ), onRejected: { shortcut in
+                    shortcutMessage = "A tecla \(KeyboardShortcutFormatter.displayName(for: shortcut)) é reservada pelo aplicativo."
+                })
                 .frame(maxWidth: .infinity, minHeight: 28)
                 if pad.keyboardShortcut != nil {
                     Button {
@@ -264,6 +285,11 @@ struct SoundPadEditorView: View {
                     .foregroundStyle(Color.dqMuted)
                     .help("Remover atalho")
                 }
+            }
+            if let shortcutMessage {
+                Text(shortcutMessage)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.orange)
             }
             HStack {
                 Button("Excluir", role: .destructive, action: onDelete)
@@ -285,18 +311,21 @@ struct SoundPadEditorView: View {
 
 struct ShortcutCaptureField: NSViewRepresentable {
     @Binding var shortcut: String?
+    let onRejected: (String) -> Void
 
     func makeNSView(context: Context) -> ShortcutCaptureView {
         let field = ShortcutCaptureView()
         field.onCapture = { value in
             shortcut = value
         }
+        field.onReject = onRejected
         field.shortcut = shortcut
         return field
     }
 
     func updateNSView(_ nsView: ShortcutCaptureView, context: Context) {
         nsView.shortcut = shortcut
+        nsView.onReject = onRejected
     }
 }
 
@@ -305,6 +334,7 @@ final class ShortcutCaptureView: NSView, KeyboardShortcutCaptureResponder {
         didSet { needsDisplay = true }
     }
     var onCapture: ((String?) -> Void)?
+    var onReject: ((String) -> Void)?
     private var captureMonitor: Any?
     private var isCapturing = false
 
@@ -367,6 +397,10 @@ final class ShortcutCaptureView: NSView, KeyboardShortcutCaptureResponder {
             return true
         }
         guard let shortcut = KeyboardShortcutFormatter.identifier(for: event) else { return false }
+        guard !KeyboardShortcutFormatter.isReserved(shortcut) else {
+            onReject?(shortcut)
+            return true
+        }
         onCapture?(shortcut)
         stopCapture()
         return true
