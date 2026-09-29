@@ -60,6 +60,7 @@ final class AudioOutputBusPair {
     let primary: AudioOutputBus
     let monitor: AudioOutputBus
 
+    private(set) var primaryEnabled = true
     private(set) var monitorEnabled = false
 
     init(label: String) {
@@ -68,10 +69,12 @@ final class AudioOutputBusPair {
         monitor.mixer.outputVolume = 0
     }
 
-    func apply(outputUID: String?, monitorEnabled: Bool, monitorUID: String?) {
+    func apply(outputUID: String?, primaryEnabled: Bool, monitorEnabled: Bool, monitorUID: String?) {
         primary.setOutputDevice(uid: outputUID)
         monitor.setOutputDevice(uid: monitorUID)
+        self.primaryEnabled = primaryEnabled || !monitorEnabled
         self.monitorEnabled = monitorEnabled
+        primary.mixer.outputVolume = self.primaryEnabled ? 1 : 0
         monitor.mixer.outputVolume = monitorEnabled ? 1 : 0
         if !monitorEnabled { monitor.stop() }
     }
@@ -80,20 +83,25 @@ final class AudioOutputBusPair {
         primary.startIfNeeded()
         if monitorEnabled { monitor.startIfNeeded() }
     }
+
+    func stop() {
+        primary.stop()
+        monitor.stop()
+    }
 }
 
 struct RoutedAudioPlayers {
     let primary: AVAudioPlayerNode
     let monitor: AVAudioPlayerNode
 
-    func play(monitorEnabled: Bool) {
-        primary.play()
-        if monitorEnabled { monitor.play() }
+    func play(primaryEnabled: Bool, monitorEnabled: Bool) {
+        if primaryEnabled { primary.play() } else { primary.stop() }
+        if monitorEnabled { monitor.play() } else { monitor.stop() }
     }
 
-    func pause(monitorEnabled: Bool) {
-        primary.pause()
-        if monitorEnabled { monitor.pause() }
+    func pause(primaryEnabled: Bool, monitorEnabled: Bool) {
+        if primaryEnabled { primary.pause() } else { primary.stop() }
+        if monitorEnabled { monitor.pause() } else { monitor.stop() }
     }
 
     func stop() {

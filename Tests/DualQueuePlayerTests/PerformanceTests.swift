@@ -76,11 +76,15 @@ final class PerformanceTests: XCTestCase {
         settings.padOutputUID = "pad-device"
         settings.padMonitorEnabled = true
         settings.performanceOutputUID = "performance-device"
+        settings.performanceRoute = .monitor
 
         let data = try JSONEncoder().encode(settings)
         let decoded = try JSONDecoder().decode(AudioOutputSettings.self, from: data)
 
         XCTAssertEqual(decoded, settings)
+        XCTAssertEqual(decoded.playlistRoute, .mainAndMonitor)
+        XCTAssertEqual(decoded.padRoute, .mainAndMonitor)
+        XCTAssertEqual(decoded.performanceRoute, .monitor)
     }
 
     func testPlaylistPlaybackSettingsRoundTripAndDurationClamp() throws {

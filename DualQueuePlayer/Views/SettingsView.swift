@@ -76,7 +76,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 12) {
                 Label("Rotas de saída", systemImage: "point.3.connected.trianglepath.dotted")
                     .font(.system(size: 14, weight: .semibold))
-                Text("Defina as saídas principais e escolha uma única saída de monitor. Depois marque quais grupos devem ser enviados ao monitor.")
+                Text("Escolha a rota de cada grupo: saída principal + monitor, somente saída principal ou somente monitor.")
                     .font(.system(size: 11))
                     .foregroundStyle(Color.dqMuted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -109,9 +109,9 @@ struct SettingsView: View {
                         get: { viewModel.audioOutputSettings.playlistOutputUID },
                         set: { value in viewModel.updateAudioOutputSettings { $0.playlistOutputUID = value } }
                     ),
-                    monitorEnabled: Binding(
-                        get: { viewModel.audioOutputSettings.playlistMonitorEnabled },
-                        set: { value in viewModel.updateAudioOutputSettings { $0.playlistMonitorEnabled = value } }
+                    route: Binding(
+                        get: { viewModel.audioOutputSettings.playlistRoute },
+                        set: { value in viewModel.updateAudioOutputSettings { $0.playlistRoute = value } }
                     ),
                     devices: viewModel.outputDevices
                 )
@@ -122,9 +122,9 @@ struct SettingsView: View {
                         get: { viewModel.audioOutputSettings.padOutputUID },
                         set: { value in viewModel.updateAudioOutputSettings { $0.padOutputUID = value } }
                     ),
-                    monitorEnabled: Binding(
-                        get: { viewModel.audioOutputSettings.padMonitorEnabled },
-                        set: { value in viewModel.updateAudioOutputSettings { $0.padMonitorEnabled = value } }
+                    route: Binding(
+                        get: { viewModel.audioOutputSettings.padRoute },
+                        set: { value in viewModel.updateAudioOutputSettings { $0.padRoute = value } }
                     ),
                     devices: viewModel.outputDevices
                 )
@@ -135,9 +135,9 @@ struct SettingsView: View {
                         get: { viewModel.audioOutputSettings.performanceOutputUID },
                         set: { value in viewModel.updateAudioOutputSettings { $0.performanceOutputUID = value } }
                     ),
-                    monitorEnabled: Binding(
-                        get: { viewModel.audioOutputSettings.performanceMonitorEnabled },
-                        set: { value in viewModel.updateAudioOutputSettings { $0.performanceMonitorEnabled = value } }
+                    route: Binding(
+                        get: { viewModel.audioOutputSettings.performanceRoute },
+                        set: { value in viewModel.updateAudioOutputSettings { $0.performanceRoute = value } }
                     ),
                     devices: viewModel.outputDevices
                 )
@@ -229,7 +229,7 @@ private struct AudioOutputRouteSection: View {
     let title: String
     let symbolName: String
     @Binding var outputUID: String?
-    @Binding var monitorEnabled: Bool
+    @Binding var route: AudioRouteMode
     let devices: [AudioOutputDevice]
 
     var body: some View {
@@ -245,8 +245,12 @@ private struct AudioOutputRouteSection: View {
             }
             .font(.system(size: 11))
 
-            Toggle("Enviar ao monitor", isOn: $monitorEnabled)
-                .font(.system(size: 11))
+            Picker("Rota de áudio", selection: $route) {
+                ForEach(AudioRouteMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+            .font(.system(size: 11))
         }
         .padding(10)
         .background(Color.dqPanelRaised.opacity(0.75))
