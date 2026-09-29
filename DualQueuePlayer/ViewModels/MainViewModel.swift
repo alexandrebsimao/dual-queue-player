@@ -77,6 +77,9 @@ final class MainViewModel: ObservableObject {
     var nextTrack: Track? {
         guard let currentTrack, let queue = currentQueue else { return nil }
         let vm = viewModel(for: queue)
+        if vm.queue.playbackMode == .shuffle {
+            return vm.upcomingTrack()
+        }
         guard let index = vm.queue.tracks.firstIndex(where: { $0.id == currentTrack.id }) else { return nil }
         let nextIndex = index + 1
         return vm.queue.tracks.indices.contains(nextIndex) ? vm.queue.tracks[nextIndex] : nil
@@ -127,6 +130,20 @@ final class MainViewModel: ObservableObject {
             return
         }
         play(track, from: activeQueue)
+    }
+
+    func playSelected(in queue: QueueIdentifier) {
+        if queue == activeQueue {
+            playSelected()
+            return
+        }
+
+        let vm = viewModel(for: queue)
+        guard let track = vm.queue.selectedTrack ?? vm.queue.tracks.first else {
+            showMessage("Adicione uma música à \(queue.title) antes de reproduzir.")
+            return
+        }
+        play(track, from: queue)
     }
 
     func play(_ track: Track, from queue: QueueIdentifier) {
