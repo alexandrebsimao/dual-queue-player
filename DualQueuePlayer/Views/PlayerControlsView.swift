@@ -33,7 +33,7 @@ struct PlayerControlsView: View {
             HStack(spacing: 10) {
                 DQIconButton(systemName: "backward.end.fill", title: nil) { viewModel.previous() }
                 DQIconButton(systemName: viewModel.playbackState == .playing ? "pause.fill" : "play.fill", title: nil, tint: .white, prominent: true) { viewModel.togglePlayPause() }
-                DQIconButton(systemName: "stop.fill", title: nil) { viewModel.stop() }
+                DQIconButton(systemName: "stop.fill", title: viewModel.stopAtCurrentTrackEnd ? "Parar agora" : nil) { viewModel.stop() }
                 DQIconButton(systemName: "forward.end.fill", title: nil) { viewModel.next() }
             }
             HStack(spacing: 10) {

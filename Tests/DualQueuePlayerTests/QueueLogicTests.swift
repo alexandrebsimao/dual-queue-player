@@ -41,6 +41,15 @@ final class QueueLogicTests: XCTestCase {
         XCTAssertEqual(vm.previousTrack()?.id, first?.id)
     }
 
+    func testShuffleUpcomingTrackUsesShuffleBagOrder() {
+        let tracks = makeTracks(3)
+        var queue = PlaylistQueue(name: "A", tracks: tracks, selectedTrackID: tracks[0].id, playbackMode: .shuffle)
+        queue.shuffleBag = [tracks[2].id, tracks[1].id]
+        let vm = QueueViewModel(identifier: .queueA, queue: queue)
+
+        XCTAssertEqual(vm.upcomingTrack()?.id, tracks[2].id)
+    }
+
     func testRemovingSelectedTrackNormalizesSelection() {
         let tracks = makeTracks(2)
         let vm = QueueViewModel(identifier: .queueA, queue: PlaylistQueue(name: "A", tracks: tracks, selectedTrackID: tracks[0].id))

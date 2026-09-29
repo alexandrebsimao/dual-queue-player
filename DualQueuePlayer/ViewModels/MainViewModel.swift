@@ -10,8 +10,13 @@ enum PlaybackState: Equatable {
 
 @MainActor
 final class MainViewModel: ObservableObject {
+    @Published var workspaceMode: WorkspaceMode = .player
     @Published var queueA: QueueViewModel
     @Published var queueB: QueueViewModel
+    @Published var performance: PerformanceViewModel
+    @Published var playlistPlaybackSettings: PlaylistPlaybackSettings
+    @Published var audioOutputSettings: AudioOutputSettings
+    @Published private(set) var outputDevices: [AudioOutputDevice] = []
     @Published var activeQueue: QueueIdentifier
     @Published var currentTrack: Track?
     @Published var currentQueue: QueueIdentifier?
@@ -33,24 +38,38 @@ final class MainViewModel: ObservableObject {
     private let shortcutManager = KeyboardShortcutManager()
     private var localEventMonitor: Any?
     private var activeDuckPads = Set<UUID>()
+    @Published private(set) var stopAtCurrentTrackEnd = false
+    private var queueSwitchToken = UUID()
+    private var autosaveTask: Task<Void, Never>?
 
     init() {
         let project = ProjectStore.shared.loadLastProject() ?? .empty
         queueA = QueueViewModel(identifier: .queueA, queue: project.queueA)
         queueB = QueueViewModel(identifier: .queueB, queue: project.queueB)
+        playlistPlaybackSettings = project.playlistPlaybackSettings
+        audioOutputSettings = project.audioOutputSettings
         activeQueue = project.activeQueue
         currentProjectURL = nil
         masterVolume = project.masterVolume
         padPages = project.padPages
         audio = AudioEngineManager()
         audio.volume = Float(project.masterVolume)
+        outputDevices = AudioOutputDeviceCatalog.availableDevices()
+        audio.applyOutputSettings(project.audioOutputSettings)
+        performance = PerformanceViewModel(
+            projects: project.performanceProjects,
+            selectedProjectID: project.selectedPerformanceProjectID,
+            audio: audio
+        )
         wireViewModels()
+        performance.onChange = { [weak self] in self?.autosaveProject() }
         configureAudioCallbacks()
         configureShortcuts()
     }
 
     deinit {
         if let localEventMonitor { NSEvent.removeMonitor(localEventMonitor) }
+        autosaveTask?.cancel()
     }
 
     var activeQueueViewModel: QueueViewModel { viewModel(for: activeQueue) }
@@ -58,6 +77,9 @@ final class MainViewModel: ObservableObject {
     var nextTrack: Track? {
         guard let currentTrack, let queue = currentQueue else { return nil }
         let vm = viewModel(for: queue)
+        if vm.queue.playbackMode == .shuffle {
+            return vm.upcomingTrack()
+        }
         guard let index = vm.queue.tracks.firstIndex(where: { $0.id == currentTrack.id }) else { return nil }
         let nextIndex = index + 1
         return vm.queue.tracks.indices.contains(nextIndex) ? vm.queue.tracks[nextIndex] : nil
@@ -69,12 +91,8 @@ final class MainViewModel: ObservableObject {
 
     func selectQueue(_ identifier: QueueIdentifier) {
         guard identifier != activeQueue else { return }
-        audio.stop()
-        playbackState = .stopped
-        currentTrack = nil
-        currentQueue = nil
-        activeQueue = identifier
-        persist()
+        let shouldStartSelectedTrack = playlistPlaybackSettings.queueSwitchMode == .automatic
+        switchQueue(to: identifier, startTrack: nil, shouldStart: shouldStartSelectedTrack)
     }
 
     func selectTrack(_ track: Track, in queue: QueueIdentifier) {
@@ -84,7 +102,11 @@ final class MainViewModel: ObservableObject {
 
     func togglePlayPause() {
         if playbackState == .playing {
-            audio.pause()
+            if playlistPlaybackSettings.pauseWithFade {
+                audio.pauseWithFade(duration: playlistPlaybackSettings.fadeDuration)
+            } else {
+                audio.pause()
+            }
             playbackState = .paused
             return
         }
@@ -110,13 +132,31 @@ final class MainViewModel: ObservableObject {
         play(track, from: activeQueue)
     }
 
+    func playSelected(in queue: QueueIdentifier) {
+        if queue == activeQueue {
+            playSelected()
+            return
+        }
+
+        let vm = viewModel(for: queue)
+        guard let track = vm.queue.selectedTrack ?? vm.queue.tracks.first else {
+            showMessage("Adicione uma música à \(queue.title) antes de reproduzir.")
+            return
+        }
+        play(track, from: queue)
+    }
+
     func play(_ track: Track, from queue: QueueIdentifier) {
-        if queue != activeQueue { selectQueue(queue) }
+        if queue != activeQueue {
+            switchQueue(to: queue, startTrack: track, shouldStart: true)
+            return
+        }
         guard !track.isMissing, FileManager.default.fileExists(atPath: track.fileURL.path) else {
             showMessage("O arquivo de \(track.title) não foi encontrado.")
             return
         }
         do {
+            stopAtCurrentTrackEnd = false
             viewModel(for: queue).select(track)
             try audio.play(trackURL: track.fileURL)
             currentTrack = track
@@ -131,15 +171,29 @@ final class MainViewModel: ObservableObject {
     }
 
     func stop() {
-        audio.stop()
-        playbackState = .stopped
-        currentTime = 0
+        if stopAtCurrentTrackEnd {
+            stopImmediately()
+            return
+        }
+        guard playlistPlaybackSettings.stopBehavior == .afterCurrentTrack,
+              playbackState == .playing else {
+            stopImmediately()
+            return
+        }
+        stopAtCurrentTrackEnd = true
+    }
+
+    func updatePlaylistSettings(_ update: (inout PlaylistPlaybackSettings) -> Void) {
+        var updated = playlistPlaybackSettings
+        update(&updated)
+        playlistPlaybackSettings = updated
+        autosaveProject()
     }
 
     func clearQueue(_ identifier: QueueIdentifier) {
         let queue = viewModel(for: identifier)
         if identifier == activeQueue, currentQueue == identifier {
-            stop()
+            stopImmediately()
             currentTrack = nil
             currentQueue = nil
         }
@@ -150,7 +204,7 @@ final class MainViewModel: ObservableObject {
         let vm = activeQueueViewModel
         let wasPlaying = playbackState == .playing
         if vm.queue.playbackMode == .manual {
-            stop()
+            stopImmediately()
             _ = vm.nextTrack()
             currentTrack = vm.queue.selectedTrack
             return
@@ -163,7 +217,7 @@ final class MainViewModel: ObservableObject {
     func previous() {
         let vm = activeQueueViewModel
         let wasPlaying = playbackState == .playing
-        if vm.queue.playbackMode == .manual { stop() }
+        if vm.queue.playbackMode == .manual { stopImmediately() }
         guard let track = vm.previousTrack() else { return }
         if wasPlaying && vm.queue.playbackMode != .manual { play(track, from: activeQueue) }
         else { currentTrack = track }
@@ -175,14 +229,26 @@ final class MainViewModel: ObservableObject {
     }
 
     func triggerPad(_ pad: SoundPad) {
-        do { try audio.playPad(pad) }
-        catch { showMessage("Configure um arquivo de áudio para este pad."); return }
+        guard let fileURL = pad.fileURL else {
+            showMessage("Configure um arquivo de áudio para o pad \(pad.name).")
+            return
+        }
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            showMessage("O arquivo do pad \(pad.name) não foi encontrado.")
+            return
+        }
+        do {
+            try audio.playPad(pad)
+        } catch {
+            showMessage("Não foi possível reproduzir o pad \(pad.name): \(error.localizedDescription)")
+            return
+        }
 
         switch pad.mode {
         case .overlay:
             break
         case .interrupt:
-            if playbackState == .playing { stop() }
+            if playbackState == .playing { stopImmediately() }
         case .duck:
             if playbackState == .playing {
                 let volume = duckingController.begin(currentVolume: masterVolume)
@@ -200,13 +266,35 @@ final class MainViewModel: ObservableObject {
         shortcutManager.isEnabled = enabled
     }
 
+    func setWorkspaceMode(_ mode: WorkspaceMode) {
+        workspaceMode = mode
+    }
+
+    func refreshOutputDevices() {
+        outputDevices = AudioOutputDeviceCatalog.availableDevices()
+    }
+
+    func updateAudioOutputSettings(_ update: (inout AudioOutputSettings) -> Void) {
+        var updated = audioOutputSettings
+        update(&updated)
+        audioOutputSettings = updated
+        audio.applyOutputSettings(updated)
+        autosaveProject()
+    }
+
     func saveProject() {
         if currentProjectURL == nil { saveProjectAs() }
         else { persist() }
     }
 
     func autosaveProject() {
-        persist()
+        autosaveTask?.cancel()
+        autosaveTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard let self, !Task.isCancelled else { return }
+            self.autosaveTask = nil
+            self.persist()
+        }
     }
 
     func saveProjectAs() {
@@ -243,26 +331,33 @@ final class MainViewModel: ObservableObject {
 
     func deleteSelectedPadPage() {
         guard padPages.count > 1, padPages.indices.contains(selectedPadPageIndex) else { return }
+        let removedPadIDs = padPages[selectedPadPageIndex].pads.map { $0.id }
         padPages.remove(at: selectedPadPageIndex)
+        removedPadIDs.forEach { audio.releasePad($0) }
         selectedPadPageIndex = min(selectedPadPageIndex, padPages.count - 1)
         persist()
     }
 
     func updatePad(_ pad: SoundPad) {
         guard padPages.indices.contains(selectedPadPageIndex), let index = padPages[selectedPadPageIndex].pads.firstIndex(where: { $0.id == pad.id }) else { return }
-        padPages[selectedPadPageIndex].pads[index] = pad
+        var updatedPad = pad
+        if KeyboardShortcutFormatter.isReserved(updatedPad.keyboardShortcut) {
+            updatedPad.keyboardShortcut = nil
+        }
+        padPages[selectedPadPageIndex].pads[index] = updatedPad
         persist()
     }
 
     func removePad(id: UUID) {
         guard padPages.indices.contains(selectedPadPageIndex) else { return }
         padPages[selectedPadPageIndex].pads.removeAll { $0.id == id }
+        audio.releasePad(id)
         persist()
     }
 
     private func wireViewModels() {
-        queueA.onChange = { [weak self] in self?.persist() }
-        queueB.onChange = { [weak self] in self?.persist() }
+        queueA.onChange = { [weak self] in self?.autosaveProject() }
+        queueB.onChange = { [weak self] in self?.autosaveProject() }
     }
 
     private func configureAudioCallbacks() {
@@ -279,6 +374,17 @@ final class MainViewModel: ObservableObject {
     }
 
     private func handleShortcut(_ key: String) {
+        if workspaceMode == .performance {
+            switch key {
+            case "p":
+                togglePlayPause()
+            case "shift+p":
+                stop()
+            default:
+                performance.handleShortcut(key)
+            }
+            return
+        }
         switch key {
         case "space": togglePlayPause()
         case "escape": stop()
@@ -286,16 +392,82 @@ final class MainViewModel: ObservableObject {
         case "b": selectQueue(.queueB)
         case "left": previous()
         case "right": next()
+        case "p", "shift+p": return
         default:
+            guard !KeyboardShortcutFormatter.isReserved(key) else { return }
+            if triggerPad(for: key) { return }
             let index = key == "0" ? 9 : (Int(key).map { $0 - 1 } ?? -1)
             guard padPages.indices.contains(selectedPadPageIndex), padPages[selectedPadPageIndex].pads.indices.contains(index) else { return }
             triggerPad(padPages[selectedPadPageIndex].pads[index])
         }
     }
 
+    private func triggerPad(for shortcut: String) -> Bool {
+        guard !KeyboardShortcutFormatter.isReserved(shortcut),
+              padPages.indices.contains(selectedPadPageIndex) else { return false }
+        let normalizedShortcut = shortcut.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard let pad = padPages[selectedPadPageIndex].pads.first(where: {
+            $0.keyboardShortcut?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedShortcut
+        }) else { return false }
+        triggerPad(pad)
+        return true
+    }
+
+    private func switchQueue(to identifier: QueueIdentifier, startTrack: Track?, shouldStart: Bool) {
+        let token = UUID()
+        queueSwitchToken = token
+        activeQueue = identifier
+
+        let shouldFade = playbackState == .playing &&
+            (playlistPlaybackSettings.queueSwitchMode == .automatic || playlistPlaybackSettings.stopWithFade)
+
+        let finish: () -> Void = { [weak self] in
+            guard let self, self.queueSwitchToken == token else { return }
+            self.currentTrack = nil
+            self.currentQueue = nil
+            self.playbackState = .stopped
+            self.currentTime = 0
+            if shouldStart {
+                let trackToStart = startTrack ?? self.viewModel(for: identifier).queue.selectedTrack
+                if let trackToStart {
+                    self.play(trackToStart, from: identifier)
+                } else {
+                    self.showMessage("Selecione uma música na \(identifier.title) para iniciar automaticamente.")
+                }
+            }
+            self.persist()
+        }
+
+        if shouldFade {
+            playbackState = .stopped
+            audio.stopWithFade(duration: playlistPlaybackSettings.fadeDuration, completion: finish)
+        } else {
+            audio.stop()
+            finish()
+        }
+    }
+
+    private func stopImmediately() {
+        stopAtCurrentTrackEnd = false
+        if playlistPlaybackSettings.stopWithFade && playbackState == .playing {
+            playbackState = .stopped
+            audio.stopWithFade(duration: playlistPlaybackSettings.fadeDuration)
+        } else {
+            audio.stop()
+            playbackState = .stopped
+        }
+        currentTime = 0
+    }
+
     private func handleMusicFinished() {
         guard let queue = currentQueue else { return }
         let vm = viewModel(for: queue)
+        if stopAtCurrentTrackEnd {
+            stopAtCurrentTrackEnd = false
+            playbackState = .stopped
+            currentTime = duration
+            return
+        }
         if vm.queue.playbackMode == .manual {
             playbackState = .stopped
             currentTime = duration
@@ -325,10 +497,25 @@ final class MainViewModel: ObservableObject {
     }
 
     private func makeProject() -> AppProject {
-        AppProject(queueA: queueA.queue, queueB: queueB.queue, activeQueue: activeQueue, masterVolume: masterVolume, padPages: padPages, duckVolume: duckingController.duckVolume, duckFadeDown: duckingController.fadeDownDuration, duckFadeUp: duckingController.fadeUpDuration)
+        AppProject(
+            queueA: queueA.queue,
+            queueB: queueB.queue,
+            activeQueue: activeQueue,
+            masterVolume: masterVolume,
+            padPages: padPages,
+            duckVolume: duckingController.duckVolume,
+            duckFadeDown: duckingController.fadeDownDuration,
+            duckFadeUp: duckingController.fadeUpDuration,
+            playlistPlaybackSettings: playlistPlaybackSettings,
+            audioOutputSettings: audioOutputSettings,
+            performanceProjects: performance.projects,
+            selectedPerformanceProjectID: performance.selectedProjectID
+        )
     }
 
     private func persist() {
+        autosaveTask?.cancel()
+        autosaveTask = nil
         let project = makeProject()
         store.saveAutosave(project)
         if let currentProjectURL {
@@ -337,6 +524,7 @@ final class MainViewModel: ObservableObject {
     }
 
     private func load(_ project: AppProject, projectURL: URL? = nil) {
+        audio.releaseAllPads()
         queueA.queue = project.queueA
         queueB.queue = project.queueB
         queueA.queue.tracks.indices.forEach { queueA.queue.tracks[$0].refreshAvailability() }
@@ -348,8 +536,15 @@ final class MainViewModel: ObservableObject {
         duckingController.duckVolume = project.duckVolume
         duckingController.fadeDownDuration = project.duckFadeDown
         duckingController.fadeUpDuration = project.duckFadeUp
+        playlistPlaybackSettings = project.playlistPlaybackSettings
+        audioOutputSettings = project.audioOutputSettings
+        refreshOutputDevices()
+        audio.applyOutputSettings(project.audioOutputSettings)
+        performance.load(projects: project.performanceProjects, selectedProjectID: project.selectedPerformanceProjectID)
         currentTrack = nil
         currentQueue = nil
+        stopAtCurrentTrackEnd = false
+        queueSwitchToken = UUID()
         playbackState = .stopped
         wireViewModels()
         persist()

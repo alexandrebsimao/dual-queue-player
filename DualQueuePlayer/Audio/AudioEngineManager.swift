@@ -8,47 +8,114 @@ final class AudioEngineManager: NSObject, ObservableObject {
     @Published private(set) var currentTime: TimeInterval = 0
     @Published private(set) var duration: TimeInterval = 0
     @Published var volume: Float = 0.8 {
-        didSet { musicMixer.outputVolume = volume }
+        didSet {
+            playlistBus.primary.mixer.outputVolume = playlistBus.primaryEnabled ? volume : 0
+            playlistBus.monitor.mixer.outputVolume = playlistBus.monitorEnabled ? volume : 0
+        }
     }
 
     var onMusicFinished: (() -> Void)?
     var onPadFinished: ((UUID) -> Void)?
+    var onPerformanceItemFinished: ((UUID) -> Void)?
+    var onPerformanceItemProgress: ((UUID, TimeInterval, TimeInterval) -> Void)?
 
-    private let engine = AVAudioEngine()
-    private let musicPlayer = AVAudioPlayerNode()
-    private let musicMixer = AVAudioMixerNode()
-    private let padMixer = AVAudioMixerNode()
-    private var padPlayers: [UUID: AVAudioPlayerNode] = [:]
+    private let playlistBus = AudioOutputBusPair(label: "Playlist")
+    private let padBus = AudioOutputBusPair(label: "Pad")
+    private let performanceBus = AudioOutputBusPair(label: "Performance")
+    private lazy var musicPlayers = RoutedAudioPlayers(
+        primary: playlistBus.primary.makePlayer(),
+        monitor: playlistBus.monitor.makePlayer()
+    )
+    private var padPlayers: [UUID: RoutedAudioPlayers] = [:]
+    private var performancePlayers: [UUID: RoutedAudioPlayers] = [:]
+    private var performanceFiles: [UUID: AVAudioFile] = [:]
+    private var performanceDurations: [UUID: TimeInterval] = [:]
+    private var performanceOffsets: [UUID: TimeInterval] = [:]
+    private var performanceStartDates: [UUID: Date] = [:]
+    private var performanceLoops: Set<UUID> = []
+    private var performancePlaying = Set<UUID>()
+    private var performanceTokens: [UUID: UUID] = [:]
+    private var performanceProgressTimer: Timer?
     private var scheduledFile: AVAudioFile?
     private var playbackStartTime: TimeInterval = 0
     private var progressTimer: Timer?
+    private var musicFadeTask: Task<Void, Never>?
+    private var musicFadeToken = UUID()
     private var musicURL: URL?
     private var playbackToken = UUID()
 
     override init() {
         super.init()
-        configureEngine()
+        playlistBus.primary.mixer.outputVolume = volume
+        playlistBus.monitor.mixer.outputVolume = 0
     }
 
     deinit {
         progressTimer?.invalidate()
+        performanceProgressTimer?.invalidate()
+        musicFadeTask?.cancel()
     }
 
-    private func configureEngine() {
-        engine.attach(musicPlayer)
-        engine.attach(musicMixer)
-        engine.attach(padMixer)
+    func applyOutputSettings(_ settings: AudioOutputSettings) {
+        let musicFile = scheduledFile
+        let musicWasPlaying = isPlaying
+        let musicTime: TimeInterval
+        if musicWasPlaying {
+            updateProgress()
+        }
+        musicTime = currentTime
 
-        let format = engine.outputNode.inputFormat(forBus: 0)
-        engine.connect(musicPlayer, to: musicMixer, format: format)
-        engine.connect(musicMixer, to: engine.mainMixerNode, format: format)
-        engine.connect(padMixer, to: engine.mainMixerNode, format: format)
-        musicMixer.outputVolume = volume
+        if musicFile != nil {
+            playbackToken = UUID()
+            musicPlayers.stop()
+            playlistBus.stop()
+            stopProgressTimer()
+        }
 
-        do {
-            try engine.start()
-        } catch {
-            NSLog("DualQueue: não foi possível iniciar AVAudioEngine: %@", error.localizedDescription)
+        playlistBus.apply(
+            outputUID: settings.playlistOutputUID,
+            primaryEnabled: settings.playlistRoute.includesPrimary,
+            monitorEnabled: settings.playlistMonitorEnabled,
+            monitorUID: settings.monitorOutputUID
+        )
+        playlistBus.primary.mixer.outputVolume = playlistBus.primaryEnabled ? volume : 0
+        playlistBus.monitor.mixer.outputVolume = playlistBus.monitorEnabled ? volume : 0
+        padBus.apply(
+            outputUID: settings.padOutputUID,
+            primaryEnabled: settings.padRoute.includesPrimary,
+            monitorEnabled: settings.padMonitorEnabled,
+            monitorUID: settings.monitorOutputUID
+        )
+        performanceBus.apply(
+            outputUID: settings.performanceOutputUID,
+            primaryEnabled: settings.performanceRoute.includesPrimary,
+            monitorEnabled: settings.performanceMonitorEnabled,
+            monitorUID: settings.monitorOutputUID
+        )
+
+        guard let musicFile else { return }
+        let frame = AVAudioFramePosition(musicTime * musicFile.fileFormat.sampleRate)
+        guard frame < musicFile.length else {
+            isPlaying = false
+            return
+        }
+
+        let token = UUID()
+        playbackToken = token
+        scheduleMusicFile(
+            musicFile,
+            token: token,
+            startTime: musicTime,
+            includePrimary: playlistBus.primaryEnabled,
+            includeMonitor: playlistBus.monitorEnabled
+        )
+        playlistBus.startIfNeeded()
+        currentTime = musicTime
+        playbackStartTime = musicTime
+        isPlaying = musicWasPlaying
+        if musicWasPlaying {
+            musicPlayers.play(primaryEnabled: playlistBus.primaryEnabled, monitorEnabled: playlistBus.monitorEnabled)
+            startProgressTimer()
         }
     }
 
@@ -65,47 +132,64 @@ final class AudioEngineManager: NSObject, ObservableObject {
         currentTime = 0
         playbackStartTime = 0
 
-        if !engine.isRunning { try engine.start() }
-        musicPlayer.scheduleFile(file, at: nil) { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                guard self.playbackToken == token, self.isPlaying else { return }
-                self.isPlaying = false
-                self.currentTime = self.duration
-                self.stopProgressTimer()
-                self.onMusicFinished?()
-            }
-        }
-        musicPlayer.play()
+        playlistBus.startIfNeeded()
+        scheduleMusicFile(
+            file,
+            token: token,
+            includePrimary: playlistBus.primaryEnabled,
+            includeMonitor: playlistBus.monitorEnabled
+        )
+        musicPlayers.play(primaryEnabled: playlistBus.primaryEnabled, monitorEnabled: playlistBus.monitorEnabled)
         isPlaying = true
         startProgressTimer()
     }
 
     func pause() {
         guard isPlaying else { return }
+        cancelMusicFade(restoreVolume: true)
         updateProgress()
-        musicPlayer.pause()
+        musicPlayers.pause(primaryEnabled: playlistBus.primaryEnabled, monitorEnabled: playlistBus.monitorEnabled)
         isPlaying = false
         stopProgressTimer()
     }
 
     func resume() {
         guard scheduledFile != nil else { return }
-        if !engine.isRunning { try? engine.start() }
-        musicPlayer.play()
+        cancelMusicFade(restoreVolume: true)
+        playlistBus.startIfNeeded()
+        musicPlayers.play(primaryEnabled: playlistBus.primaryEnabled, monitorEnabled: playlistBus.monitorEnabled)
         isPlaying = true
         startProgressTimer()
     }
 
     func stop() {
+        cancelMusicFade(restoreVolume: true)
         playbackToken = UUID()
-        musicPlayer.stop()
+        musicPlayers.stop()
         isPlaying = false
         currentTime = 0
         playbackStartTime = 0
         scheduledFile = nil
         musicURL = nil
         stopProgressTimer()
+    }
+
+    func pauseWithFade(duration: TimeInterval, completion: (() -> Void)? = nil) {
+        guard isPlaying else { completion?(); return }
+        fadeMusicVolume(to: 0, duration: duration) { [weak self] in
+            guard let self else { return }
+            self.pause()
+            completion?()
+        }
+    }
+
+    func stopWithFade(duration: TimeInterval, completion: (() -> Void)? = nil) {
+        guard isPlaying else { stop(); completion?(); return }
+        fadeMusicVolume(to: 0, duration: duration) { [weak self] in
+            guard let self else { return }
+            self.stop()
+            completion?()
+        }
     }
 
     func seek(to time: TimeInterval) {
@@ -117,21 +201,18 @@ final class AudioEngineManager: NSObject, ObservableObject {
         let wasPlaying = isPlaying
         playbackToken = UUID()
         let token = playbackToken
-        musicPlayer.stop()
-        musicPlayer.scheduleSegment(file, startingFrame: frame, frameCount: AVAudioFrameCount(file.length - frame), at: nil) { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                guard self.playbackToken == token, self.isPlaying else { return }
-                self.isPlaying = false
-                self.currentTime = self.duration
-                self.stopProgressTimer()
-                self.onMusicFinished?()
-            }
-        }
+        musicPlayers.stop()
+        scheduleMusicFile(
+            file,
+            token: token,
+            startTime: clamped,
+            includePrimary: playlistBus.primaryEnabled,
+            includeMonitor: playlistBus.monitorEnabled
+        )
         currentTime = clamped
         playbackStartTime = clamped
         if wasPlaying {
-            musicPlayer.play()
+            musicPlayers.play(primaryEnabled: playlistBus.primaryEnabled, monitorEnabled: playlistBus.monitorEnabled)
             isPlaying = true
             startProgressTimer()
         }
@@ -145,49 +226,344 @@ final class AudioEngineManager: NSObject, ObservableObject {
             padPlayers.values.forEach { $0.stop() }
         }
 
-        let player = padPlayers[pad.id] ?? makePadPlayer(for: pad.id)
-        player.volume = Float(pad.volume)
+        let players = padPlayers[pad.id] ?? makePadPlayers(for: pad.id)
+        players.primary.volume = Float(pad.volume)
+        players.monitor.volume = Float(pad.volume)
         if pad.loops {
-            player.scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack) { [weak self, weak player] _ in
-                guard let player else { return }
-                player.scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack) { _ in }
-            }
+            if padBus.primaryEnabled { schedulePadLoop(file, player: players.primary) }
+            if padBus.monitorEnabled { schedulePadLoop(file, player: players.monitor) }
         } else {
-            player.scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            let completion: @Sendable (AVAudioPlayerNodeCompletionCallbackType) -> Void = { [weak self] _ in
                 Task { @MainActor [weak self] in self?.onPadFinished?(pad.id) }
             }
+            if padBus.primaryEnabled {
+                players.primary.scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack, completionHandler: completion)
+            }
+            if padBus.monitorEnabled {
+                players.monitor.scheduleFile(
+                    file,
+                    at: nil,
+                    completionCallbackType: .dataPlayedBack,
+                    completionHandler: padBus.primaryEnabled ? { _ in } : completion
+                )
+            }
         }
-        if !engine.isRunning { try engine.start() }
-        player.play()
+        padBus.startIfNeeded()
+        players.play(primaryEnabled: padBus.primaryEnabled, monitorEnabled: padBus.monitorEnabled)
     }
 
     func stopPad(_ id: UUID) {
-        padPlayers[id]?.stop()
+        releasePad(id)
+    }
+
+    func releasePad(_ id: UUID) {
+        guard let players = padPlayers.removeValue(forKey: id) else { return }
+        padBus.primary.removePlayer(players.primary)
+        padBus.monitor.removePlayer(players.monitor)
         onPadFinished?(id)
     }
 
-    func fadeMusicVolume(to target: Float, duration: TimeInterval) {
-        let start = musicMixer.outputVolume
-        guard duration > 0 else { musicMixer.outputVolume = target; return }
-        Task { @MainActor [weak self] in
+    func releaseAllPads() {
+        Array(padPlayers.keys).forEach { releasePad($0) }
+    }
+
+    @discardableResult
+    func playPerformanceItem(id: UUID, url: URL, volume: Float, loops: Bool) throws -> TimeInterval {
+        let file = try AVAudioFile(forReading: url)
+        guard file.length > 0 else { throw AudioError.emptyFile }
+
+        stopPerformanceItem(id: id, notify: false)
+        let players = performancePlayers[id] ?? makePerformancePlayers(for: id)
+        let duration = Double(file.length) / file.fileFormat.sampleRate
+        let token = UUID()
+
+        performanceFiles[id] = file
+        performanceDurations[id] = duration
+        performanceOffsets[id] = 0
+        performanceStartDates[id] = Date()
+        performanceTokens[id] = token
+        if loops { performanceLoops.insert(id) } else { performanceLoops.remove(id) }
+        performancePlaying.insert(id)
+        players.primary.volume = volume
+        players.monitor.volume = volume
+
+        schedulePerformanceFile(
+            id: id,
+            file: file,
+            token: token,
+            includePrimary: performanceBus.primaryEnabled,
+            includeMonitor: performanceBus.monitorEnabled
+        )
+        performanceBus.startIfNeeded()
+        players.play(primaryEnabled: performanceBus.primaryEnabled, monitorEnabled: performanceBus.monitorEnabled)
+        startPerformanceProgressTimer()
+        return duration
+    }
+
+    func pausePerformanceItem(id: UUID) {
+        guard performancePlaying.contains(id), let players = performancePlayers[id] else { return }
+        updatePerformanceProgress(for: id)
+        players.pause(primaryEnabled: performanceBus.primaryEnabled, monitorEnabled: performanceBus.monitorEnabled)
+        performancePlaying.remove(id)
+        if performancePlaying.isEmpty { stopPerformanceProgressTimer() }
+    }
+
+    func resumePerformanceItem(id: UUID) {
+        guard !performancePlaying.contains(id), let players = performancePlayers[id], performanceFiles[id] != nil else { return }
+        performanceBus.startIfNeeded()
+        performanceStartDates[id] = Date()
+        performancePlaying.insert(id)
+        players.play(primaryEnabled: performanceBus.primaryEnabled, monitorEnabled: performanceBus.monitorEnabled)
+        startPerformanceProgressTimer()
+    }
+
+    func seekPerformanceItem(id: UUID, to time: TimeInterval) {
+        guard let file = performanceFiles[id], let duration = performanceDurations[id], let players = performancePlayers[id] else { return }
+        let clamped = min(max(time, 0), duration)
+        let wasPlaying = performancePlaying.contains(id)
+        let token = UUID()
+
+        performanceTokens[id] = token
+        players.stop()
+        performanceOffsets[id] = clamped
+        performanceStartDates[id] = wasPlaying ? Date() : nil
+
+        guard clamped < duration else {
+            performancePlaying.remove(id)
+            if performancePlaying.isEmpty { stopPerformanceProgressTimer() }
+            onPerformanceItemProgress?(id, duration, duration)
+            return
+        }
+
+        schedulePerformanceFile(
+            id: id,
+            file: file,
+            token: token,
+            startTime: clamped,
+            includePrimary: performanceBus.primaryEnabled,
+            includeMonitor: performanceBus.monitorEnabled
+        )
+        if wasPlaying {
+            performanceBus.startIfNeeded()
+            players.play(primaryEnabled: performanceBus.primaryEnabled, monitorEnabled: performanceBus.monitorEnabled)
+            startPerformanceProgressTimer()
+        }
+    }
+
+    func stopPerformanceItem(id: UUID) {
+        stopPerformanceItem(id: id, notify: true)
+    }
+
+    func stopAllPerformanceItems() {
+        Array(performancePlayers.keys).forEach { stopPerformanceItem(id: $0, notify: true) }
+    }
+
+    func performanceItemCurrentTime(id: UUID) -> TimeInterval {
+        updatePerformanceProgress(for: id)
+        return performanceOffsets[id] ?? 0
+    }
+
+    func fadeMusicVolume(to target: Float, duration: TimeInterval, completion: (() -> Void)? = nil) {
+        musicFadeTask?.cancel()
+        musicFadeToken = UUID()
+        let token = musicFadeToken
+        let start = playlistBus.primary.mixer.outputVolume
+        guard duration > 0 else {
+            setPlaylistVolume(target)
+            completion?()
+            return
+        }
+        musicFadeTask = Task { @MainActor [weak self] in
             let steps = max(1, Int(duration * 30))
             for step in 1...steps {
                 try? await Task.sleep(for: .milliseconds(33))
-                guard let self else { return }
+                guard let self, !Task.isCancelled, self.musicFadeToken == token else { return }
                 let progress = Float(step) / Float(steps)
-                self.musicMixer.outputVolume = start + ((target - start) * progress)
-                if step == steps { self.volume = target }
+                self.setPlaylistVolume(start + ((target - start) * progress))
+            }
+            guard let self, self.musicFadeToken == token else { return }
+            self.setPlaylistVolume(target)
+            self.musicFadeTask = nil
+            completion?()
+        }
+    }
+
+    private func setPlaylistVolume(_ value: Float) {
+        playlistBus.primary.mixer.outputVolume = value
+        playlistBus.monitor.mixer.outputVolume = playlistBus.monitorEnabled ? value : 0
+    }
+
+    private func cancelMusicFade(restoreVolume: Bool) {
+        musicFadeTask?.cancel()
+        musicFadeTask = nil
+        musicFadeToken = UUID()
+        if restoreVolume { setPlaylistVolume(volume) }
+    }
+
+    private func makePadPlayers(for id: UUID) -> RoutedAudioPlayers {
+        let players = RoutedAudioPlayers(primary: padBus.primary.makePlayer(), monitor: padBus.monitor.makePlayer())
+        padPlayers[id] = players
+        return players
+    }
+
+    private func makePerformancePlayers(for id: UUID) -> RoutedAudioPlayers {
+        let players = RoutedAudioPlayers(primary: performanceBus.primary.makePlayer(), monitor: performanceBus.monitor.makePlayer())
+        performancePlayers[id] = players
+        return players
+    }
+
+    private func scheduleMusicFile(
+        _ file: AVAudioFile,
+        token: UUID,
+        startTime: TimeInterval = 0,
+        includePrimary: Bool,
+        includeMonitor: Bool
+    ) {
+        let sampleRate = file.fileFormat.sampleRate
+        let startingFrame = AVAudioFramePosition(max(0, startTime) * sampleRate)
+        let completion: @Sendable (AVAudioPlayerNodeCompletionCallbackType) -> Void = { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.playbackToken == token, self.isPlaying else { return }
+                self.isPlaying = false
+                self.currentTime = self.duration
+                self.stopProgressTimer()
+                self.onMusicFinished?()
+            }
+        }
+        let monitorCompletion: @Sendable (AVAudioPlayerNodeCompletionCallbackType) -> Void = { _ in }
+        if includePrimary {
+            if startingFrame > 0 {
+                let frameCount = AVAudioFrameCount(max(0, file.length - startingFrame))
+                musicPlayers.primary.scheduleSegment(file, startingFrame: startingFrame, frameCount: frameCount, at: nil, completionCallbackType: .dataPlayedBack, completionHandler: completion)
+            } else {
+                musicPlayers.primary.scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack, completionHandler: completion)
+            }
+        }
+        if includeMonitor {
+            let monitorHandler = includePrimary ? monitorCompletion : completion
+            if startingFrame > 0 {
+                let frameCount = AVAudioFrameCount(max(0, file.length - startingFrame))
+                musicPlayers.monitor.scheduleSegment(file, startingFrame: startingFrame, frameCount: frameCount, at: nil, completionCallbackType: .dataPlayedBack, completionHandler: monitorHandler)
+            } else {
+                musicPlayers.monitor.scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack, completionHandler: monitorHandler)
             }
         }
     }
 
-    private func makePadPlayer(for id: UUID) -> AVAudioPlayerNode {
-        let player = AVAudioPlayerNode()
-        engine.attach(player)
-        let format = engine.outputNode.inputFormat(forBus: 0)
-        engine.connect(player, to: padMixer, format: format)
-        padPlayers[id] = player
-        return player
+    private func schedulePadLoop(_ file: AVAudioFile, player: AVAudioPlayerNode) {
+        player.scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack) { [weak self, weak player] _ in
+            guard let player else { return }
+            Task { @MainActor [weak self, weak player] in
+                guard let self, let player else { return }
+                self.schedulePadLoop(file, player: player)
+            }
+        }
+    }
+
+    private func schedulePerformanceFile(
+        id: UUID,
+        file: AVAudioFile,
+        token: UUID,
+        startTime: TimeInterval = 0,
+        includePrimary: Bool,
+        includeMonitor: Bool
+    ) {
+        guard let players = performancePlayers[id] else { return }
+        let sampleRate = file.fileFormat.sampleRate
+        let startingFrame = AVAudioFramePosition(max(0, startTime) * sampleRate)
+        let completion: @Sendable (AVAudioPlayerNodeCompletionCallbackType) -> Void = { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.performanceTokens[id] == token, self.performancePlaying.contains(id) else { return }
+                if self.performanceLoops.contains(id) {
+                    self.performanceOffsets[id] = 0
+                    self.performanceStartDates[id] = Date()
+                    self.schedulePerformanceFile(
+                        id: id,
+                        file: file,
+                        token: token,
+                        includePrimary: self.performanceBus.primaryEnabled,
+                        includeMonitor: self.performanceBus.monitorEnabled
+                    )
+                } else {
+                    self.performanceOffsets[id] = self.performanceDurations[id] ?? 0
+                    self.performancePlaying.remove(id)
+                    self.performanceStartDates[id] = nil
+                    self.performanceFiles[id] = nil
+                    self.performanceDurations[id] = nil
+                    self.performanceLoops.remove(id)
+                    self.performanceTokens.removeValue(forKey: id)
+                    self.releasePerformancePlayers(id)
+                    if self.performancePlaying.isEmpty { self.stopPerformanceProgressTimer() }
+                    self.onPerformanceItemFinished?(id)
+                }
+            }
+        }
+        let monitorCompletion: @Sendable (AVAudioPlayerNodeCompletionCallbackType) -> Void = { _ in }
+        if includePrimary {
+            if startingFrame > 0 {
+                let frameCount = AVAudioFrameCount(max(0, file.length - startingFrame))
+                players.primary.scheduleSegment(file, startingFrame: startingFrame, frameCount: frameCount, at: nil, completionCallbackType: .dataPlayedBack, completionHandler: completion)
+            } else {
+                players.primary.scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack, completionHandler: completion)
+            }
+        }
+        if includeMonitor {
+            let monitorHandler = includePrimary ? monitorCompletion : completion
+            if startingFrame > 0 {
+                let frameCount = AVAudioFrameCount(max(0, file.length - startingFrame))
+                players.monitor.scheduleSegment(file, startingFrame: startingFrame, frameCount: frameCount, at: nil, completionCallbackType: .dataPlayedBack, completionHandler: monitorHandler)
+            } else {
+                players.monitor.scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack, completionHandler: monitorHandler)
+            }
+        }
+    }
+
+    private func stopPerformanceItem(id: UUID, notify: Bool) {
+        let hadItem = performanceFiles[id] != nil || performancePlayers[id] != nil
+        performanceTokens[id] = UUID()
+        releasePerformancePlayers(id)
+        performancePlaying.remove(id)
+        performanceFiles[id] = nil
+        performanceDurations[id] = nil
+        performanceOffsets[id] = 0
+        performanceStartDates[id] = nil
+        performanceLoops.remove(id)
+        performanceTokens.removeValue(forKey: id)
+        if performancePlaying.isEmpty { stopPerformanceProgressTimer() }
+        if notify, hadItem { onPerformanceItemFinished?(id) }
+    }
+
+    private func releasePerformancePlayers(_ id: UUID) {
+        guard let players = performancePlayers.removeValue(forKey: id) else { return }
+        performanceBus.primary.removePlayer(players.primary)
+        performanceBus.monitor.removePlayer(players.monitor)
+    }
+
+    private func startPerformanceProgressTimer() {
+        guard performanceProgressTimer == nil else { return }
+        performanceProgressTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                for id in self.performancePlaying { self.updatePerformanceProgress(for: id) }
+            }
+        }
+    }
+
+    private func stopPerformanceProgressTimer() {
+        performanceProgressTimer?.invalidate()
+        performanceProgressTimer = nil
+    }
+
+    private func updatePerformanceProgress(for id: UUID) {
+        guard let duration = performanceDurations[id] else { return }
+        if performancePlaying.contains(id), let startDate = performanceStartDates[id] {
+            let now = Date()
+            let elapsed = max(0, now.timeIntervalSince(startDate))
+            let offset = (performanceOffsets[id] ?? 0) + elapsed
+            performanceOffsets[id] = performanceLoops.contains(id) ? offset.truncatingRemainder(dividingBy: duration) : min(offset, duration)
+            performanceStartDates[id] = now
+        }
+        onPerformanceItemProgress?(id, performanceOffsets[id] ?? 0, duration)
     }
 
     private func startProgressTimer() {
@@ -204,7 +580,8 @@ final class AudioEngineManager: NSObject, ObservableObject {
 
     private func updateProgress() {
         guard isPlaying else { return }
-        let nodeTime = musicPlayer.lastRenderTime.flatMap { musicPlayer.playerTime(forNodeTime: $0) }
+        let progressPlayer = playlistBus.primaryEnabled ? musicPlayers.primary : musicPlayers.monitor
+        let nodeTime = progressPlayer.lastRenderTime.flatMap { progressPlayer.playerTime(forNodeTime: $0) }
         if let nodeTime, nodeTime.sampleRate > 0 {
             currentTime = min(duration, playbackStartTime + Double(nodeTime.sampleTime) / nodeTime.sampleRate)
         } else {

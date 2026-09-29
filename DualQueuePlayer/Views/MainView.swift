@@ -2,28 +2,33 @@ import SwiftUI
 
 struct MainView: View {
     @ObservedObject var viewModel: MainViewModel
+    @State private var isShortcutGuidePresented = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
             Color.dqBackground.ignoresSafeArea()
             VStack(spacing: 12) {
                 topBar
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(spacing: 12) {
-                        HStack(alignment: .top, spacing: 12) {
-                            QueueView(viewModel: viewModel.queueA, mainViewModel: viewModel)
-                            QueueView(viewModel: viewModel.queueB, mainViewModel: viewModel)
+                if viewModel.workspaceMode == .player {
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(spacing: 12) {
+                            HStack(alignment: .top, spacing: 12) {
+                                QueueView(viewModel: viewModel.queueA, mainViewModel: viewModel)
+                                QueueView(viewModel: viewModel.queueB, mainViewModel: viewModel)
+                            }
+                            HStack(alignment: .top, spacing: 12) {
+                                SoundPadView(viewModel: viewModel)
+                                SettingsView(viewModel: viewModel).frame(width: 320)
+                            }
                         }
-                        HStack(alignment: .top, spacing: 12) {
-                            SoundPadView(viewModel: viewModel)
-                            SettingsView(viewModel: viewModel).frame(width: 270)
+                        VStack(spacing: 12) {
+                            PlayerControlsView(viewModel: viewModel, audio: viewModel.audio)
+                            upcomingPanel
                         }
+                        .frame(width: 285)
                     }
-                    VStack(spacing: 12) {
-                        PlayerControlsView(viewModel: viewModel, audio: viewModel.audio)
-                        upcomingPanel
-                    }
-                    .frame(width: 285)
+                } else {
+                    PerformanceView(viewModel: viewModel.performance, mainViewModel: viewModel, audio: viewModel.audio)
                 }
             }
             .padding(14)
@@ -39,21 +44,60 @@ struct MainView: View {
             }
         }
         .toolbar { toolbarContent }
+        .sheet(isPresented: $isShortcutGuidePresented) {
+            KeyboardShortcutsGuideView()
+                .onAppear { viewModel.setKeyboardShortcutsEnabled(false) }
+                .onDisappear { viewModel.setKeyboardShortcutsEnabled(true) }
+        }
     }
 
     private var topBar: some View {
         HStack {
+            HStack(spacing: 8) {
+                Image(systemName: "waveform")
+                    .foregroundStyle(.blue)
+                Text("DualQueue Player")
+                    .font(.system(size: 15, weight: .semibold))
+            }
+            Spacer()
+            workspaceModePicker
             Spacer()
             HStack(spacing: 8) {
+                Button("Ajuda", systemImage: "questionmark.circle") {
+                    isShortcutGuidePresented = true
+                }
                 Button("Projeto", systemImage: "folder") { viewModel.openProject() }
                 Button("Salvar", systemImage: "square.and.arrow.down") { viewModel.saveProject() }
                 Button("Novo", systemImage: "plus") { viewModel.newProject() }
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(DQPerformanceButtonStyle())
         }
         .foregroundStyle(Color.white.opacity(0.9))
         .padding(.horizontal, 8)
-        .frame(height: 32)
+        .frame(height: 42)
+    }
+
+    private var workspaceModePicker: some View {
+        HStack(spacing: 3) {
+            ForEach(WorkspaceMode.allCases) { mode in
+                Button {
+                    viewModel.setWorkspaceMode(mode)
+                } label: {
+                    Label(mode.title, systemImage: mode.symbolName)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(viewModel.workspaceMode == mode ? Color.white : Color.dqMuted)
+                        .padding(.horizontal, 15)
+                        .frame(height: 30)
+                        .background(viewModel.workspaceMode == mode ? Color.blue : Color.clear)
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(Color.dqPanelRaised)
+        .clipShape(Capsule())
+        .overlay(Capsule().stroke(Color.white.opacity(0.1)))
     }
 
     private var upcomingPanel: some View {

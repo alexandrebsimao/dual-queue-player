@@ -13,6 +13,7 @@ final class QueueViewModel: ObservableObject {
     init(identifier: QueueIdentifier, queue: PlaylistQueue) {
         self.identifier = identifier
         self.queue = queue
+        prepareShuffleBagIfNeeded()
     }
 
     func select(_ track: Track) {
@@ -24,7 +25,20 @@ final class QueueViewModel: ObservableObject {
         queue.playbackMode = mode
         queue.shuffleBag.removeAll()
         queue.shuffleHistory.removeAll()
+        prepareShuffleBagIfNeeded()
         onChange?()
+    }
+
+    func upcomingTrack() -> Track? {
+        switch queue.playbackMode {
+        case .sequential, .manual:
+            guard let currentIndex = queue.selectedIndex else { return queue.tracks.first }
+            let nextIndex = currentIndex + 1
+            return queue.tracks.indices.contains(nextIndex) ? queue.tracks[nextIndex] : nil
+        case .shuffle:
+            guard let id = queue.shuffleBag.first else { return nil }
+            return queue.tracks.first { $0.id == id }
+        }
     }
 
     func remove(_ track: Track) {
@@ -105,6 +119,7 @@ final class QueueViewModel: ObservableObject {
             queue.tracks.append(Track(title: title, fileURL: url, duration: duration))
         }
         queue.normalizeSelection()
+        prepareShuffleBagIfNeeded()
         if !supported.isEmpty { onChange?() }
     }
 
@@ -148,6 +163,11 @@ final class QueueViewModel: ObservableObject {
         candidates.shuffle()
         if candidates.isEmpty { candidates = queue.tracks.map(\.id) }
         queue.shuffleBag = candidates
+    }
+
+    private func prepareShuffleBagIfNeeded() {
+        guard queue.playbackMode == .shuffle else { return }
+        refillShuffleBagIfNeeded()
     }
 
     private static func isSupportedAudio(_ url: URL) -> Bool {

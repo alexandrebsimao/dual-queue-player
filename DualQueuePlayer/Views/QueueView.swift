@@ -24,7 +24,6 @@ struct QueueView: View {
         .dqPanel()
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(isActive ? accent : Color.clear, lineWidth: isActive ? 2 : 0))
         .contentShape(Rectangle())
-        .onTapGesture { mainViewModel.selectQueue(viewModel.identifier) }
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: nil) { providers in
             Task { await viewModel.handleDrop(providers) }
             return true
@@ -41,21 +40,25 @@ struct QueueView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            Text(viewModel.identifier.shortTitle)
-                .font(.system(size: 23, weight: .bold))
-                .frame(width: 48, height: 48)
-                .background(accent.gradient)
-                .foregroundStyle(.white)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 10) {
-                    Text(viewModel.queue.name).font(.system(size: 21, weight: .bold))
-                    DQBadge(text: isActive ? (isPlaying ? "Tocando" : "Ativa") : "Inativa", color: isActive ? (isPlaying ? .green : accent) : .gray)
+            HStack(spacing: 12) {
+                Text(viewModel.identifier.shortTitle)
+                    .font(.system(size: 23, weight: .bold))
+                    .frame(width: 48, height: 48)
+                    .background(accent.gradient)
+                    .foregroundStyle(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 10) {
+                        Text(viewModel.queue.name).font(.system(size: 21, weight: .bold))
+                        DQBadge(text: isActive ? (isPlaying ? "Tocando" : "Ativa") : "Inativa", color: isActive ? (isPlaying ? .green : accent) : .gray)
+                    }
+                    Text("\(viewModel.queue.tracks.count) músicas • \(totalDuration)")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Color.dqMuted)
                 }
-                Text("\(viewModel.queue.tracks.count) músicas • \(totalDuration)")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Color.dqMuted)
             }
+            .contentShape(Rectangle())
+            .onTapGesture { mainViewModel.playSelected(in: viewModel.identifier) }
             Spacer()
             VStack(alignment: .trailing, spacing: 5) {
                 Text("Modo de reprodução").font(.system(size: 12)).foregroundStyle(Color.dqMuted)
@@ -158,7 +161,7 @@ struct QueueView: View {
         HStack(spacing: 10) {
             DQIconButton(systemName: "backward.end.fill", title: "Anterior") { navigateOrSelect { mainViewModel.previous() } }
             DQIconButton(systemName: isPlaying ? "pause.fill" : "play.fill", title: isPlaying ? "Pausar" : "Play", tint: .white, prominent: isActive) { toggleOrSelect() }
-            DQIconButton(systemName: "stop.fill", title: "Parar") { if isActive { mainViewModel.stop() } }
+            DQIconButton(systemName: "stop.fill", title: mainViewModel.stopAtCurrentTrackEnd ? "Parar agora" : "Parar") { if isActive { mainViewModel.stop() } }
             DQIconButton(systemName: "forward.end.fill", title: "Próxima") { navigateOrSelect { mainViewModel.next() } }
         }
     }
@@ -175,7 +178,7 @@ struct QueueView: View {
 
     private func toggleOrSelect() {
         if isActive { mainViewModel.togglePlayPause() }
-        else { mainViewModel.selectQueue(viewModel.identifier) }
+        else { mainViewModel.playSelected(in: viewModel.identifier) }
     }
 
     private func navigateOrSelect(_ action: () -> Void) {
