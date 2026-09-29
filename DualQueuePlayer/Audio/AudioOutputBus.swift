@@ -27,6 +27,15 @@ final class AudioOutputBus {
         catch { NSLog("DualQueue: não foi possível reiniciar o barramento: %@", error.localizedDescription) }
     }
 
+    func stop() {
+        engine.stop()
+    }
+
+    func removePlayer(_ player: AVAudioPlayerNode) {
+        player.stop()
+        engine.detach(player)
+    }
+
     func setOutputDevice(uid: String?) {
         guard let deviceID = AudioOutputDeviceCatalog.deviceID(for: uid),
               let audioUnit = engine.outputNode.audioUnit else { return }
@@ -64,6 +73,12 @@ final class AudioOutputBusPair {
         monitor.setOutputDevice(uid: monitorUID)
         self.monitorEnabled = monitorEnabled
         monitor.mixer.outputVolume = monitorEnabled ? 1 : 0
+        if !monitorEnabled { monitor.stop() }
+    }
+
+    func startIfNeeded() {
+        primary.startIfNeeded()
+        if monitorEnabled { monitor.startIfNeeded() }
     }
 }
 
@@ -71,14 +86,14 @@ struct RoutedAudioPlayers {
     let primary: AVAudioPlayerNode
     let monitor: AVAudioPlayerNode
 
-    func play() {
+    func play(monitorEnabled: Bool) {
         primary.play()
-        monitor.play()
+        if monitorEnabled { monitor.play() }
     }
 
-    func pause() {
+    func pause(monitorEnabled: Bool) {
         primary.pause()
-        monitor.pause()
+        if monitorEnabled { monitor.pause() }
     }
 
     func stop() {

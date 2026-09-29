@@ -40,6 +40,7 @@ final class MainViewModel: ObservableObject {
     private var activeDuckPads = Set<UUID>()
     @Published private(set) var stopAtCurrentTrackEnd = false
     private var queueSwitchToken = UUID()
+    private var autosaveTask: Task<Void, Never>?
 
     init() {
         let project = ProjectStore.shared.loadLastProject() ?? .empty
@@ -61,13 +62,14 @@ final class MainViewModel: ObservableObject {
             audio: audio
         )
         wireViewModels()
-        performance.onChange = { [weak self] in self?.persist() }
+        performance.onChange = { [weak self] in self?.autosaveProject() }
         configureAudioCallbacks()
         configureShortcuts()
     }
 
     deinit {
         if let localEventMonitor { NSEvent.removeMonitor(localEventMonitor) }
+        autosaveTask?.cancel()
     }
 
     var activeQueueViewModel: QueueViewModel { viewModel(for: activeQueue) }
@@ -168,7 +170,7 @@ final class MainViewModel: ObservableObject {
         var updated = playlistPlaybackSettings
         update(&updated)
         playlistPlaybackSettings = updated
-        persist()
+        autosaveProject()
     }
 
     func clearQueue(_ identifier: QueueIdentifier) {
@@ -269,7 +271,13 @@ final class MainViewModel: ObservableObject {
     }
 
     func autosaveProject() {
-        persist()
+        autosaveTask?.cancel()
+        autosaveTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard let self, !Task.isCancelled else { return }
+            self.autosaveTask = nil
+            self.persist()
+        }
     }
 
     func saveProjectAs() {
@@ -306,7 +314,9 @@ final class MainViewModel: ObservableObject {
 
     func deleteSelectedPadPage() {
         guard padPages.count > 1, padPages.indices.contains(selectedPadPageIndex) else { return }
+        let removedPadIDs = padPages[selectedPadPageIndex].pads.map { $0.id }
         padPages.remove(at: selectedPadPageIndex)
+        removedPadIDs.forEach { audio.releasePad($0) }
         selectedPadPageIndex = min(selectedPadPageIndex, padPages.count - 1)
         persist()
     }
@@ -324,12 +334,13 @@ final class MainViewModel: ObservableObject {
     func removePad(id: UUID) {
         guard padPages.indices.contains(selectedPadPageIndex) else { return }
         padPages[selectedPadPageIndex].pads.removeAll { $0.id == id }
+        audio.releasePad(id)
         persist()
     }
 
     private func wireViewModels() {
-        queueA.onChange = { [weak self] in self?.persist() }
-        queueB.onChange = { [weak self] in self?.persist() }
+        queueA.onChange = { [weak self] in self?.autosaveProject() }
+        queueB.onChange = { [weak self] in self?.autosaveProject() }
     }
 
     private func configureAudioCallbacks() {
@@ -486,6 +497,8 @@ final class MainViewModel: ObservableObject {
     }
 
     private func persist() {
+        autosaveTask?.cancel()
+        autosaveTask = nil
         let project = makeProject()
         store.saveAutosave(project)
         if let currentProjectURL {
@@ -494,6 +507,7 @@ final class MainViewModel: ObservableObject {
     }
 
     private func load(_ project: AppProject, projectURL: URL? = nil) {
+        audio.releaseAllPads()
         queueA.queue = project.queueA
         queueB.queue = project.queueB
         queueA.queue.tracks.indices.forEach { queueA.queue.tracks[$0].refreshAvailability() }
